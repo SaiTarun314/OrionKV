@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: node
+spec:
+  serviceName: kv-store-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: kv-store
+  template:
+    metadata:
+      labels:
+        app: kv-store
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: spring-boot-node
+          image: kv-store:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: kv-store-config
+                  key: PORT
+            - name: SEED_NODES
+              valueFrom:
+                configMapKeyRef:
+                  name: kv-store-config
+                  key: SEED_NODES
+            - name: POD_DNS_NAME
+              value: "$(POD_NAME).kv-store-headless.$(POD_NAMESPACE).svc.cluster.local"
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10

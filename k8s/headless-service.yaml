@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kv-store-headless
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: kv-store
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

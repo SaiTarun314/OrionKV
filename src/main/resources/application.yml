@@ -1,0 +1,10 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: kv-store-data-plane
+
+dataplane:
+  storage:
+    log-path: ${WAL_LOG_PATH:data/wal.log}

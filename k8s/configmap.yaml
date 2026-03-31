@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kv-store-config
+data:
+  PORT: "8080"
+  # Seed nodes are only used for initial gossip joins.
+  # Keeping the original three here is enough even after scaling.
+  SEED_NODES: "node-0.kv-store-headless,node-1.kv-store-headless,node-2.kv-store-headless"
