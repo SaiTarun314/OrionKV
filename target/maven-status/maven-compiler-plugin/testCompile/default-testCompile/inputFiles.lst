@@ -1,0 +1,7 @@
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/bootstrap/service/JoinServiceTest.java
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/bootstrap/service/RebalanceServiceTest.java
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/membership/rpc/GossipRpcHandlerTest.java
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/membership/service/FailureDetectorServiceTest.java
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/membership/service/GossipServiceTest.java
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/membership/service/MembershipServiceTest.java
+/Users/saitarun/Desktop/ADS/Project/src/test/java/com/ads/controlplane/ring/service/HashRingServiceTest.java
