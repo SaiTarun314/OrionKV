@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: orionkv
+
+orion:
+  local-node-id: node-a
+  virtual-nodes-per-physical: 8
+  quorum:
+    n: 3
+    r: 2
+    w: 2
+  nodes:
+    - node-id: node-a
+      host: localhost
+      port: 50051
+    - node-id: node-b
+      host: localhost
+      port: 50052
+    - node-id: node-c
+      host: localhost
+      port: 50053
