@@ -53,6 +53,37 @@ class GossipRpcHandlerTest {
         assertThat(observer.values.get(0).getMembershipList()).hasSize(1);
     }
 
+    @Test
+    void shouldIgnoreRemoteRecordForSelfNode() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.updateHeartbeat("node-self", "127.0.0.1:8080", 7);
+
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-self");
+
+        GossipRpcHandler handler = new GossipRpcHandler(membershipService, nodeProperties);
+        RecordingObserver observer = new RecordingObserver();
+
+        GossipPayload request = GossipPayload.newBuilder()
+                .setSourceNodeId("node-a")
+                .addMembership(MemberRecordProto.newBuilder()
+                        .setNodeId("node-self")
+                        .setAddress("127.0.0.1:8080")
+                        .setStatus(MemberStatusProto.DEAD)
+                        .setIncarnation(7)
+                        .setLastSeen("2026-03-29T19:58:00Z")
+                        .build())
+                .build();
+
+        handler.gossip(request, observer);
+
+        assertThat(membershipService.getMember("node-self")).get()
+                .extracting(MemberRecord::status)
+                .isEqualTo(MemberStatus.ALIVE);
+    }
+
     private static final class RecordingObserver implements StreamObserver<MembershipState> {
         private final List<MembershipState> values = new ArrayList<>();
 

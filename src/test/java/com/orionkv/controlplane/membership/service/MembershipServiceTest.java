@@ -78,4 +78,15 @@ class MembershipServiceTest {
         assertThat(suspect.status()).isEqualTo(MemberStatus.SUSPECT);
         assertThat(dead.status()).isEqualTo(MemberStatus.DEAD);
     }
+
+    @Test
+    void shouldIncreaseIncarnationWhenRevivingFromDead() {
+        membershipService.updateHeartbeat("node-d", "10.0.0.5:8080", 4);
+        membershipService.markDead("node-d");
+
+        MemberRecord revived = membershipService.updateHeartbeat("node-d", "10.0.0.5:8080", 0);
+
+        assertThat(revived.status()).isEqualTo(MemberStatus.ALIVE);
+        assertThat(revived.incarnation()).isEqualTo(5);
+    }
 }
