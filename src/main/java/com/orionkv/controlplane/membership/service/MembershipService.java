@@ -60,6 +60,10 @@ public class MembershipService {
         Instant now = Instant.now(clock);
         return members.compute(nodeId, (id, existing) -> {
             long nextIncarnation = existing == null ? incarnation : Math.max(existing.incarnation(), incarnation);
+            if (existing != null && existing.status() != MemberStatus.ALIVE) {
+                // A node that was marked suspect/dead must come back with higher incarnation.
+                nextIncarnation = Math.max(nextIncarnation, existing.incarnation() + 1);
+            }
             String nextAddress = address != null ? address : existing == null ? null : existing.address();
             return new MemberRecord(id, nextAddress, MemberStatus.ALIVE, nextIncarnation, now);
         });

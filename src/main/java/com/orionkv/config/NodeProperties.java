@@ -9,6 +9,7 @@ public class NodeProperties {
     private String address;
     private String seedAddress;
     private long gossipIntervalMs = 5000;
+    private long selfHeartbeatIntervalMs = 1000;
     private long failureDetectionIntervalMs = 2000;
     private long suspectTimeoutMs = 10000;
     private long deadTimeoutMs = 30000;
@@ -49,6 +50,14 @@ public class NodeProperties {
 
     public long getFailureDetectionIntervalMs() {
         return failureDetectionIntervalMs;
+    }
+
+    public long getSelfHeartbeatIntervalMs() {
+        return selfHeartbeatIntervalMs;
+    }
+
+    public void setSelfHeartbeatIntervalMs(long selfHeartbeatIntervalMs) {
+        this.selfHeartbeatIntervalMs = selfHeartbeatIntervalMs;
     }
 
     public void setFailureDetectionIntervalMs(long failureDetectionIntervalMs) {
@@ -112,6 +121,7 @@ public class NodeProperties {
                 case "node.address" -> properties.setAddress(value);
                 case "node.seed-address" -> properties.setSeedAddress(value);
                 case "node.gossip-interval-ms" -> properties.setGossipIntervalMs(Long.parseLong(value));
+                case "node.self-heartbeat-interval-ms" -> properties.setSelfHeartbeatIntervalMs(Long.parseLong(value));
                 case "node.failure-detection-interval-ms" ->
                         properties.setFailureDetectionIntervalMs(Long.parseLong(value));
                 case "node.suspect-timeout-ms" -> properties.setSuspectTimeoutMs(Long.parseLong(value));
