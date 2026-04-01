@@ -17,6 +17,8 @@ import org.springframework.stereotype.Component;
 public class GrpcServerLifecycle implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcServerLifecycle.class);
+    private static final int JOIN_RETRY_ATTEMPTS = 30;
+    private static final long JOIN_RETRY_DELAY_MS = 500;
 
     private final NodeProperties nodeProperties;
     private final MembershipService membershipService;
@@ -66,7 +68,34 @@ public class GrpcServerLifecycle implements ApplicationRunner {
         }));
 
         if (nodeProperties.getSeedAddress() != null && !nodeProperties.getSeedAddress().isBlank()) {
-            joinService.joinCluster(nodeProperties.getSeedAddress());
+            joinSeedWithRetry(nodeProperties.getSeedAddress());
         }
+    }
+
+    private void joinSeedWithRetry(String seedAddress) {
+        RuntimeException lastFailure = null;
+        for (int attempt = 1; attempt <= JOIN_RETRY_ATTEMPTS; attempt++) {
+            try {
+                joinService.joinCluster(seedAddress);
+                if (attempt > 1) {
+                    log.info("Joined seed {} after {} attempt(s)", seedAddress, attempt);
+                }
+                return;
+            } catch (RuntimeException ex) {
+                lastFailure = ex;
+                log.warn("Join attempt {} to seed {} failed: {}", attempt, seedAddress, ex.getMessage());
+                if (attempt < JOIN_RETRY_ATTEMPTS) {
+                    try {
+                        Thread.sleep(JOIN_RETRY_DELAY_MS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }
+
+        log.error("Could not join seed {} after {} attempts; node will keep running standalone",
+                seedAddress, JOIN_RETRY_ATTEMPTS, lastFailure);
     }
 }

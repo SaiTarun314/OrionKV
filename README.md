@@ -8,54 +8,6 @@ OrionKV is a single node application that contains all three planes:
 
 Kubernetes is intentionally out of scope in this document.
 
-## Scope Plan (Team Ownership)
-
-### Week 1
-
-Sai Tarun (Control Plane):
-
-- gossip membership skeleton
-- membership table with `ALIVE/SUSPECT/DEAD`
-- consistent hash ring
-- virtual node token assignment
-
-Smeet (Data Plane):
-
-- local key-value storage engine
-- `GET/PUT/DELETE`
-- persistent layer (WAL/RocksDB style)
-- range scan API
-
-Yash (Coordination Plane):
-
-- client API layer
-- request routing
-- ring lookup for responsible replicas
-- forward reads/writes to replicas
-
-### Week 2
-
-Sai Tarun (Control Plane):
-
-- failure detection via gossip timeouts
-- ring reconstruction on membership change
-- node join protocol
-- token reassignment logic
-
-Smeet (Data Plane):
-
-- replica write handling
-- `PUT_REPLICA`
-- timestamped versions
-- bootstrap streaming for key ranges
-
-Yash (Coordination Plane):
-
-- quorum writes (`N, W`)
-- quorum reads (`R`)
-- timeout and retry handling
-- conflict resolution (last-write-wins)
-
 ## Current Code Structure
 
 - `src/main/java/com/orionkv/NodeApplication.java`
@@ -66,45 +18,6 @@ Yash (Coordination Plane):
 - `src/main/java/com/orionkv/dataplane` data-plane storage/controllers/models
 - `src/main/java/com/orionkv/coordinationplane` coordination-plane routing/quorum skeleton
 - `src/main/proto/controlplane.proto` control-plane gRPC contract
-
-## Implementation Status
-
-### Control Plane
-
-Implemented:
-
-- gossip-based membership exchange
-- membership table with status transitions
-- failure detector scheduler
-- consistent hash ring with virtual nodes
-- join flow and rebalance trigger logic
-- gRPC handlers (`GossipRpc`, `ClusterRpc`)
-
-### Data Plane
-
-Implemented:
-
-- local storage engine
-- `GET/PUT/DELETE` HTTP API
-- WAL persistence + restart recovery
-- replica write + batch apply endpoints
-- range scan + bootstrap stream endpoints
-- deterministic timestamp/tombstone conflict handling
-
-### Coordination Plane
-
-Implemented now as base structure:
-
-- replica routing service wired to hash ring
-- quorum evaluation utility (`N/W/R` checks)
-- domain models for quorum config and resolved replica route
-
-Still pending for full coordination behavior:
-
-- client-facing coordination API
-- remote forwarding to replica nodes
-- timeout/retry policy
-- merged read conflict resolution path
 
 ## Build and Test
 
@@ -118,35 +31,74 @@ Package jar:
 mvn -DskipTests package
 ```
 
-## Run Locally
+## Run Context (Local Cluster)
 
-### Data-plane focused run
-
-When `node.node-id` / `node.address` are absent, control-plane gRPC startup is skipped.
+Build once:
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8080"
+mvn clean package -DskipTests
 ```
 
-### Full node run (HTTP + gRPC)
+Start 6-node local cluster (gRPC + HTTP):
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8080 --node.node-id=node-a --node.address=127.0.0.1:9090"
+./scripts/start-cluster.sh
 ```
 
-Two-node example:
-
-Terminal 1:
+Stop all nodes from pid files:
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8081 --node.node-id=node-a --node.address=127.0.0.1:9091"
+./scripts/kill-all.sh
 ```
 
-Terminal 2:
+Check membership on all nodes:
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082 --node.node-id=node-b --node.address=127.0.0.1:9092 --node.seed-address=127.0.0.1:9091"
+for p in 9091 9092 9093 9094 9095 9096; do
+  echo "=== $p ==="
+  grpcurl -plaintext -d '{}' -proto src/main/proto/controlplane.proto \
+    127.0.0.1:$p orionkv.node.ClusterRpc/GetMembership
+done
 ```
+
+Add one more node manually (example: node-7):
+
+```bash
+for i in 7; do
+  java -jar target/orionkv-0.0.1-SNAPSHOT.jar \
+    --server.port=$((8080+i)) --node.node-id=node-$i --node.address=127.0.0.1:$((9090+i)) \
+    --node.seed-address=127.0.0.1:9091 \
+    --node.gossip-interval-ms=1000 --node.failure-detection-interval-ms=1000 \
+    --node.suspect-timeout-ms=5000 --node.dead-timeout-ms=12000 \
+    > logs/node-$i.log 2>&1 & echo $! > pids/node-$i.pid
+done
+```
+
+Failure/leave test (example node-5):
+
+```bash
+kill -9 $(cat pids/node-5.pid)
+```
+
+With `suspect-timeout-ms=5000` and `dead-timeout-ms=12000`, peers should move:
+- `ALIVE -> SUSPECT` around 5s
+- `SUSPECT -> DEAD` around 12s
+
+Restart node-5:
+
+```bash
+for i in 5; do
+  java -jar target/orionkv-0.0.1-SNAPSHOT.jar \
+    --server.port=$((8080+i)) --node.node-id=node-$i --node.address=127.0.0.1:$((9090+i)) \
+    --node.seed-address=127.0.0.1:9091 \
+    --node.gossip-interval-ms=1000 --node.failure-detection-interval-ms=1000 \
+    --node.suspect-timeout-ms=5000 --node.dead-timeout-ms=12000 \
+    > logs/node-$i.log 2>&1 & echo $! > pids/node-$i.pid
+done
+```
+
+Useful logs:
+- `logs/node-*.log`
 
 ## Configuration
 
@@ -156,6 +108,7 @@ mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082 --node.node-
 - `node.address`
 - `node.seed-address`
 - `node.gossip-interval-ms` (default `5000`)
+- `node.self-heartbeat-interval-ms` (default `1000`)
 - `node.failure-detection-interval-ms` (default `2000`)
 - `node.suspect-timeout-ms` (default `10000`)
 - `node.dead-timeout-ms` (default `30000`)

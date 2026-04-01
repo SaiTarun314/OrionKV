@@ -4,7 +4,6 @@ import com.orionkv.common.dto.GossipRequest;
 import com.orionkv.common.rpc.ControlPlaneClient;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.model.MemberRecord;
-import com.orionkv.controlplane.membership.model.MemberStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -60,9 +59,6 @@ public class GossipService {
 
     private boolean isEligiblePeer(MemberRecord memberRecord) {
         if (memberRecord.address() == null || memberRecord.address().isBlank()) {
-            return false;
-        }
-        if (memberRecord.status() == MemberStatus.DEAD) {
             return false;
         }
         return nodeProperties.getNodeId() == null || !nodeProperties.getNodeId().equals(memberRecord.nodeId());

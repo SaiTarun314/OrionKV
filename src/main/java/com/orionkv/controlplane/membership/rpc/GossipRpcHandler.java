@@ -23,7 +23,12 @@ public class GossipRpcHandler extends GossipRpcGrpc.GossipRpcImplBase {
 
     @Override
     public void gossip(GossipPayload request, StreamObserver<MembershipState> responseObserver) {
-        membershipService.mergeRemoteMembership(ProtoMapper.fromProto(request).membership());
+        membershipService.mergeRemoteMembership(
+                ProtoMapper.fromProto(request).membership().stream()
+                        .filter(record -> nodeProperties.getNodeId() == null
+                                || !nodeProperties.getNodeId().equals(record.nodeId()))
+                        .toList()
+        );
         responseObserver.onNext(ProtoMapper.toProto(new GossipResponse(
                 nodeProperties.getNodeId(),
                 membershipService.getMembershipSnapshot().stream().toList()
