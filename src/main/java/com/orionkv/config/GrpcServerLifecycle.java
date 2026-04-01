@@ -5,6 +5,8 @@ import com.orionkv.controlplane.bootstrap.service.JoinService;
 import com.orionkv.controlplane.membership.rpc.GossipRpcHandler;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.ring.service.HashRingService;
+import com.orionkv.coordinationplane.rpc.CoordinationRpcHandler;
+import com.orionkv.dataplane.rpc.ReplicaDataRpcHandler;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import org.slf4j.Logger;
@@ -26,6 +28,8 @@ public class GrpcServerLifecycle implements ApplicationRunner {
     private final JoinService joinService;
     private final GossipRpcHandler gossipRpcHandler;
     private final ClusterRpcHandler clusterRpcHandler;
+    private final CoordinationRpcHandler coordinationRpcHandler;
+    private final ReplicaDataRpcHandler replicaDataRpcHandler;
     private Server server;
 
     public GrpcServerLifecycle(
@@ -34,7 +38,9 @@ public class GrpcServerLifecycle implements ApplicationRunner {
             HashRingService hashRingService,
             JoinService joinService,
             GossipRpcHandler gossipRpcHandler,
-            ClusterRpcHandler clusterRpcHandler
+            ClusterRpcHandler clusterRpcHandler,
+            CoordinationRpcHandler coordinationRpcHandler,
+            ReplicaDataRpcHandler replicaDataRpcHandler
     ) {
         this.nodeProperties = nodeProperties;
         this.membershipService = membershipService;
@@ -42,6 +48,8 @@ public class GrpcServerLifecycle implements ApplicationRunner {
         this.joinService = joinService;
         this.gossipRpcHandler = gossipRpcHandler;
         this.clusterRpcHandler = clusterRpcHandler;
+        this.coordinationRpcHandler = coordinationRpcHandler;
+        this.replicaDataRpcHandler = replicaDataRpcHandler;
     }
 
     @Override
@@ -58,6 +66,8 @@ public class GrpcServerLifecycle implements ApplicationRunner {
         server = ServerBuilder.forPort(nodeProperties.getPort())
                 .addService(gossipRpcHandler)
                 .addService(clusterRpcHandler)
+                .addService(coordinationRpcHandler)
+                .addService(replicaDataRpcHandler)
                 .build()
                 .start();
 

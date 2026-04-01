@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package dynamo.v1;
+
+option java_multiple_files = true;
+option java_package = "com.orionkv.proto";
+option java_outer_classname = "ReplicaProto";
+
+service ReplicaService {
+  rpc ReplicateWrite(ReplicateWriteRequest) returns (ReplicateWriteResponse);
+  rpc ReplicaRead(ReplicaReadRequest) returns (ReplicaReadResponse);
+}
+
+message ReplicateWriteRequest {
+  string request_id = 1;
+  string coordinator_node_id = 2;
+  string key = 3;
+  bytes value = 4;
+  int64 timestamp_epoch_ms = 5;
+}
+
+message ReplicateWriteResponse {
+  bool ack = 1;
+  string node_id = 2;
+  string message = 3;
+}
+
+message ReplicaReadRequest {
+  string request_id = 1;
+  string coordinator_node_id = 2;
+  string key = 3;
+}
+
+message ReplicaReadResponse {
+  bool found = 1;
+  string node_id = 2;
+  bytes value = 3;
+  int64 timestamp_epoch_ms = 4;
+  string message = 5;
+}

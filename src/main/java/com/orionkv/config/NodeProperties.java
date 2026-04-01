@@ -15,6 +15,8 @@ public class NodeProperties {
     private long deadTimeoutMs = 30000;
     private int virtualNodeCount = 32;
     private int replicationFactor = 3;
+    private int writeQuorum = 2;
+    private int readQuorum = 2;
 
     public String getNodeId() {
         return nodeId;
@@ -96,6 +98,22 @@ public class NodeProperties {
         this.replicationFactor = replicationFactor;
     }
 
+    public int getWriteQuorum() {
+        return writeQuorum;
+    }
+
+    public void setWriteQuorum(int writeQuorum) {
+        this.writeQuorum = writeQuorum;
+    }
+
+    public int getReadQuorum() {
+        return readQuorum;
+    }
+
+    public void setReadQuorum(int readQuorum) {
+        this.readQuorum = readQuorum;
+    }
+
     public int getPort() {
         String normalized = normalizeTarget(address);
         int separator = normalized.lastIndexOf(':');
@@ -128,6 +146,8 @@ public class NodeProperties {
                 case "node.dead-timeout-ms" -> properties.setDeadTimeoutMs(Long.parseLong(value));
                 case "node.virtual-node-count" -> properties.setVirtualNodeCount(Integer.parseInt(value));
                 case "node.replication-factor" -> properties.setReplicationFactor(Integer.parseInt(value));
+                case "node.write-quorum" -> properties.setWriteQuorum(Integer.parseInt(value));
+                case "node.read-quorum" -> properties.setReadQuorum(Integer.parseInt(value));
                 default -> {
                 }
             }
