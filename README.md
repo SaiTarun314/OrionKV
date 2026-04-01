@@ -16,8 +16,9 @@ Kubernetes is intentionally out of scope in this document.
 - `src/main/java/com/orionkv/controlplane/ring` control-plane consistent hashing and vnode services
 - `src/main/java/com/orionkv/controlplane/bootstrap` control-plane join/rebalance services and gRPC handlers
 - `src/main/java/com/orionkv/dataplane` data-plane storage/controllers/models
-- `src/main/java/com/orionkv/coordinationplane` coordination-plane routing/quorum skeleton
+- `src/main/java/com/orionkv/coordinationplane` coordination-plane routing/quorum services
 - `src/main/proto/controlplane.proto` control-plane gRPC contract
+- `src/main/proto/coordination.proto` coordination and replica-data gRPC contract
 
 ## Build and Test
 
@@ -114,6 +115,8 @@ Useful logs:
 - `node.dead-timeout-ms` (default `30000`)
 - `node.virtual-node-count` (default `32`)
 - `node.replication-factor` (default `3`)
+- `node.write-quorum` (default `2`)
+- `node.read-quorum` (default `2`)
 
 ### Data Plane (`dataplane.*`)
 
@@ -129,6 +132,15 @@ From `controlplane.proto`:
 - `ClusterRpc.Join(JoinNodeRequest) -> MembershipState`
 - `ClusterRpc.GetMembership(google.protobuf.Empty) -> MembershipState`
 
+### Coordination and Replica Data (gRPC)
+
+From `coordination.proto`:
+
+- `CoordinationRpc.Put(ClientPutRequest) -> ClientPutResponse`
+- `CoordinationRpc.Get(ClientGetRequest) -> ClientGetResponse`
+- `ReplicaDataRpc.PutReplica(ReplicaPutRequest) -> ReplicaPutResponse`
+- `ReplicaDataRpc.GetReplica(ReplicaGetRequest) -> ReplicaGetResponse`
+
 ### Data Plane (HTTP)
 
 - `PUT /api/kv/{key}`
@@ -138,6 +150,65 @@ From `controlplane.proto`:
 - `POST /internal/replica/put`
 - `POST /internal/replica/apply-batch`
 - `GET /internal/replica/stream?startToken=...&endToken=...`
+
+## Testing Scenarios
+
+### Coordination Quorum Tests
+
+1. Write quorum success (`N=3, W=2`): with 3 healthy replicas, `CoordinationRpc.Put` returns success and `ack_count >= 2`.
+2. Write quorum failure: with only one reachable replica, `CoordinationRpc.Put` returns failure and `ack_count < 2`.
+3. Read quorum success (`N=3, R=2`): with at least 2 responses, `CoordinationRpc.Get` returns read result from quorum winner.
+4. Read quorum failure: with fewer than 2 responses, `CoordinationRpc.Get` returns read-quorum failure.
+5. LWW conflict resolution: conflicting replica values return highest timestamp value.
+6. LWW tie case: equal timestamps resolve deterministically by node-id ordering.
+
+### Ring and Replication Correctness
+
+1. Deterministic routing: same key routed through different coordinators yields the same replica set.
+2. Ring consistency across nodes: all alive nodes produce identical token/replica mapping for sampled keys.
+3. Replica write correctness: after `CoordinationRpc.Put`, direct `ReplicaDataRpc.GetReplica` on chosen replicas shows expected value/version.
+
+### Failure and Recovery Behavior
+
+1. Single-replica failure: with one replica down, writes/reads still succeed for `W=2`, `R=2` if two replicas respond.
+2. Double-replica failure: with two replicas down, writes/reads fail with quorum-not-met outcomes.
+3. Membership transition impact: after node kill, verify `ALIVE -> SUSPECT -> DEAD` and routing continues with alive nodes.
+4. Rejoin correctness: after node restart and gossip convergence, reads remain correct for sampled keys.
+5. Persistence check: restart nodes after writes and verify values survive via quorum reads.
+
+### gRPC Smoke Commands
+
+Coordination Put:
+
+```bash
+grpcurl -plaintext -d '{"requestId":"r1","key":"alpha","value":"v1","timestamp":"0"}' \
+  -proto src/main/proto/coordination.proto \
+  127.0.0.1:9091 orionkv.node.CoordinationRpc/Put
+```
+
+Coordination Get:
+
+```bash
+grpcurl -plaintext -d '{"requestId":"r2","key":"alpha"}' \
+  -proto src/main/proto/coordination.proto \
+  127.0.0.1:9092 orionkv.node.CoordinationRpc/Get
+```
+
+Replica Put:
+
+```bash
+grpcurl -plaintext -d '{"requestId":"r3","key":"alpha","value":"v1","timestamp":"1710000000000","tombstone":false,"token":"123","sourceNodeId":"node-1"}' \
+  -proto src/main/proto/coordination.proto \
+  127.0.0.1:9093 orionkv.node.ReplicaDataRpc/PutReplica
+```
+
+Replica Get:
+
+```bash
+grpcurl -plaintext -d '{"requestId":"r4","key":"alpha"}' \
+  -proto src/main/proto/coordination.proto \
+  127.0.0.1:9093 orionkv.node.ReplicaDataRpc/GetReplica
+```
 
 ## Docker
 
