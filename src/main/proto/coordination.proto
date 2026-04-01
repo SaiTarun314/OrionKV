@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package orionkv.node;
+
+option java_multiple_files = true;
+option java_package = "com.orionkv.proto";
+
+message ClientPutRequest {
+  string request_id = 1;
+  string key = 2;
+  string value = 3;
+  int64 timestamp = 4;
+}
+
+message ClientPutResponse {
+  bool success = 1;
+  string key = 2;
+  int64 token = 3;
+  int64 timestamp = 4;
+  int32 ack_count = 5;
+  int32 required_acks = 6;
+  repeated string replica_node_ids = 7;
+  string message = 8;
+}
+
+message ClientGetRequest {
+  string request_id = 1;
+  string key = 2;
+}
+
+message ClientGetResponse {
+  bool found = 1;
+  string key = 2;
+  string value = 3;
+  int64 token = 4;
+  int64 timestamp = 5;
+  bool tombstone = 6;
+  int32 response_count = 7;
+  int32 required_responses = 8;
+  repeated string replica_node_ids = 9;
+  string message = 10;
+}
+
+service CoordinationRpc {
+  rpc Put(ClientPutRequest) returns (ClientPutResponse);
+  rpc Get(ClientGetRequest) returns (ClientGetResponse);
+}
+
+message ReplicaPutRequest {
+  string request_id = 1;
+  string key = 2;
+  string value = 3;
+  int64 timestamp = 4;
+  bool tombstone = 5;
+  int64 token = 6;
+  string source_node_id = 7;
+}
+
+message ReplicaPutResponse {
+  bool ack = 1;
+  bool applied = 2;
+  string node_id = 3;
+  string message = 4;
+}
+
+message ReplicaGetRequest {
+  string request_id = 1;
+  string key = 2;
+}
+
+message ReplicaGetResponse {
+  bool responded = 1;
+  bool found = 2;
+  string key = 3;
+  string value = 4;
+  int64 token = 5;
+  int64 timestamp = 6;
+  bool tombstone = 7;
+  string node_id = 8;
+  string message = 9;
+}
+
+service ReplicaDataRpc {
+  rpc PutReplica(ReplicaPutRequest) returns (ReplicaPutResponse);
+  rpc GetReplica(ReplicaGetRequest) returns (ReplicaGetResponse);
+}
