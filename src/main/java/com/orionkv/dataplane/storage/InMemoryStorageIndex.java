@@ -80,7 +80,8 @@ public class InMemoryStorageIndex {
                 entry.value(),
                 entry.timestamp(),
                 entry.tombstone(),
-                entry.token()
+                entry.token(),
+                entry.sourceNodeId()
         );
     }
 }

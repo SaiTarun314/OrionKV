@@ -1,5 +1,6 @@
 package com.orionkv.dataplane;
 
+import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.service.StorageService;
 import com.orionkv.dataplane.util.TokenUtil;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,28 @@ class ReplicaStreamIntegrationTest {
                 .andExpect(jsonPath("$.count").value(2))
                 .andExpect(jsonPath("$.records[0].key").value(high.key()))
                 .andExpect(jsonPath("$.records[1].key").value(low.key()));
+    }
+
+    @Test
+    void replicaStreamIncludesSourceNodeIdForReplicatedRecords() throws Exception {
+        String key = "replica-source-key";
+        long token = TokenUtil.tokenFor(key);
+        storageService.applyReplicaWrite(new ReplicaRecord(
+                key,
+                "replica-value",
+                200L,
+                false,
+                token,
+                "node-2"
+        ));
+
+        mockMvc.perform(get("/internal/replica/stream")
+                        .queryParam("startToken", Long.toString(token))
+                        .queryParam("endToken", Long.toString(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.records[0].key").value(key))
+                .andExpect(jsonPath("$.records[0].sourceNodeId").value("node-2"));
     }
 
     private List<KeyTokenPair> findDistinctKeys(int count) {

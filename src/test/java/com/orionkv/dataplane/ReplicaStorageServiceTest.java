@@ -40,6 +40,7 @@ class ReplicaStorageServiceTest {
         assertTrue(result.applied());
         assertEquals("replica-value", storageService.get("user-1").value());
         assertEquals(200L, storageService.get("user-1").timestamp());
+        assertEquals("node-2", storageService.get("user-1").sourceNodeId());
     }
 
     @Test
@@ -183,6 +184,7 @@ class ReplicaStorageServiceTest {
         LocalStorageService recoveredService = createHarness(walPath).storageService();
         assertEquals("replicated", recoveredService.get("replica-recovery-key").value());
         assertEquals(101L, recoveredService.get("replica-recovery-key").timestamp());
+        assertEquals("node-8", recoveredService.get("replica-recovery-key").sourceNodeId());
     }
 
     @Test
@@ -198,6 +200,8 @@ class ReplicaStorageServiceTest {
         LocalStorageService recoveredService = createHarness(walPath).storageService();
         assertEquals("one", recoveredService.get("boot-a").value());
         assertEquals("two", recoveredService.get("boot-b").value());
+        assertEquals("node-9", recoveredService.get("boot-a").sourceNodeId());
+        assertEquals("node-9", recoveredService.get("boot-b").sourceNodeId());
     }
 
     private TestHarness createHarness(Path walPath) {
