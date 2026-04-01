@@ -141,14 +141,20 @@ public class LocalStorageService implements StorageService {
 
     private WriteAheadLogEntry toWriteAheadLogEntry(ReplicaRecord replicaRecord) {
         if (replicaRecord.tombstone()) {
-            return WriteAheadLogEntry.delete(replicaRecord.key(), replicaRecord.timestamp(), replicaRecord.token());
+            return WriteAheadLogEntry.delete(
+                    replicaRecord.key(),
+                    replicaRecord.timestamp(),
+                    replicaRecord.token(),
+                    replicaRecord.sourceNodeId()
+            );
         }
 
         return WriteAheadLogEntry.put(
                 replicaRecord.key(),
                 replicaRecord.value(),
                 replicaRecord.timestamp(),
-                replicaRecord.token()
+                replicaRecord.token(),
+                replicaRecord.sourceNodeId()
         );
     }
 }
