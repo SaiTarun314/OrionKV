@@ -57,6 +57,7 @@ for node in $NODE_IDS; do
     "--server.port=${http_port}"
     "--node.node-id=node-${node}"
     "--node.address=127.0.0.1:${grpc_port}"
+    "--dataplane.storage.log-path=data/node-${node}/wal.log"
     "--node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}"
     "--node.self-heartbeat-interval-ms=${SELF_HEARTBEAT_INTERVAL_MS}"
     "--node.failure-detection-interval-ms=${FAILURE_DETECTION_INTERVAL_MS}"

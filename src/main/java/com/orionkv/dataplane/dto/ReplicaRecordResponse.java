@@ -18,7 +18,7 @@ public record ReplicaRecordResponse(
                 storedValue.timestamp(),
                 storedValue.tombstone(),
                 storedValue.token(),
-                null
+                storedValue.sourceNodeId()
         );
     }
 
