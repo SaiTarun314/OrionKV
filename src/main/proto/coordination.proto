@@ -83,4 +83,27 @@ message ReplicaGetResponse {
 service ReplicaDataRpc {
   rpc PutReplica(ReplicaPutRequest) returns (ReplicaPutResponse);
   rpc GetReplica(ReplicaGetRequest) returns (ReplicaGetResponse);
+  rpc StreamRange(ReplicaRangeRequest) returns (ReplicaRangeResponse);
+}
+
+message ReplicaRangeRequest {
+  int64 start_token = 1;
+  int64 end_token = 2;
+  int32 batch_size = 3;
+  string cursor = 4;
+}
+
+message ReplicaRecordProto {
+  string key = 1;
+  string value = 2;
+  int64 timestamp = 3;
+  bool tombstone = 4;
+  int64 token = 5;
+  string source_node_id = 6;
+}
+
+message ReplicaRangeResponse {
+  repeated ReplicaRecordProto records = 1;
+  string next_cursor = 2;
+  bool done = 3;
 }

@@ -1,7 +1,6 @@
 package com.orionkv.dataplane.rpc;
 
 import com.orionkv.config.NodeProperties;
-import com.orionkv.dataplane.exception.KeyNotFoundException;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.service.ReplicaApplyResult;
@@ -11,6 +10,9 @@ import com.orionkv.proto.ReplicaGetRequest;
 import com.orionkv.proto.ReplicaGetResponse;
 import com.orionkv.proto.ReplicaPutRequest;
 import com.orionkv.proto.ReplicaPutResponse;
+import com.orionkv.proto.ReplicaRangeRequest;
+import com.orionkv.proto.ReplicaRangeResponse;
+import com.orionkv.proto.ReplicaRecordProto;
 import io.grpc.stub.StreamObserver;
 import org.springframework.stereotype.Component;
 
@@ -52,8 +54,7 @@ public class ReplicaDataRpcHandler extends ReplicaDataRpcGrpc.ReplicaDataRpcImpl
                 .setResponded(true)
                 .setNodeId(nodeProperties.getNodeId() == null ? "" : nodeProperties.getNodeId());
 
-        try {
-            StoredValue storedValue = storageService.get(request.getKey());
+        storageService.getVersioned(request.getKey()).ifPresentOrElse(storedValue -> {
             builder.setFound(true)
                     .setKey(storedValue.key())
                     .setValue(storedValue.value() == null ? "" : storedValue.value())
@@ -61,11 +62,41 @@ public class ReplicaDataRpcHandler extends ReplicaDataRpcGrpc.ReplicaDataRpcImpl
                     .setTimestamp(storedValue.timestamp())
                     .setTombstone(storedValue.tombstone())
                     .setMessage("found");
-        } catch (KeyNotFoundException ignored) {
+        }, () -> {
             builder.setFound(false)
                     .setKey(request.getKey())
+                    .setTimestamp(-1L)
                     .setMessage("not found");
+        });
+
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void streamRange(ReplicaRangeRequest request, StreamObserver<ReplicaRangeResponse> responseObserver) {
+        var page = storageService.scanRangePage(
+                request.getStartToken(),
+                request.getEndToken(),
+                request.getBatchSize(),
+                request.getCursor().isBlank() ? null : request.getCursor()
+        );
+
+        ReplicaRangeResponse.Builder builder = ReplicaRangeResponse.newBuilder()
+                .setDone(page.done());
+
+        if (page.nextCursor() != null && !page.nextCursor().isBlank()) {
+            builder.setNextCursor(page.nextCursor());
         }
+
+        page.entries().forEach(entry -> builder.addRecords(ReplicaRecordProto.newBuilder()
+                .setKey(entry.key())
+                .setValue(entry.value() == null ? "" : entry.value())
+                .setTimestamp(entry.timestamp())
+                .setTombstone(entry.tombstone())
+                .setToken(entry.token())
+                .setSourceNodeId(entry.sourceNodeId() == null ? "" : entry.sourceNodeId())
+                .build()));
 
         responseObserver.onNext(builder.build());
         responseObserver.onCompleted();

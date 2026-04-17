@@ -5,12 +5,14 @@ import com.orionkv.common.dto.JoinRequest;
 import com.orionkv.common.rpc.ControlPlaneClient;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.service.MembershipService;
+import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.ring.model.TokenRange;
 import com.orionkv.controlplane.ring.service.HashRingService;
 import com.orionkv.controlplane.ring.service.VirtualNodeService;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.orionkv.controlplane.bootstrap.model.BootstrapState.JOINED;
@@ -25,6 +27,7 @@ public class JoinService {
     private final HashRingService hashRingService;
     private final VirtualNodeService virtualNodeService;
     private final RebalanceService rebalanceService;
+    private final BootstrapTransferService bootstrapTransferService;
     private final NodeProperties nodeProperties;
     private final ControlPlaneClient controlPlaneClient;
     private final AtomicReference<com.orionkv.controlplane.bootstrap.model.BootstrapState> bootstrapState =
@@ -35,6 +38,7 @@ public class JoinService {
             HashRingService hashRingService,
             VirtualNodeService virtualNodeService,
             RebalanceService rebalanceService,
+            BootstrapTransferService bootstrapTransferService,
             NodeProperties nodeProperties,
             ControlPlaneClient controlPlaneClient
     ) {
@@ -42,6 +46,7 @@ public class JoinService {
         this.hashRingService = hashRingService;
         this.virtualNodeService = virtualNodeService;
         this.rebalanceService = rebalanceService;
+        this.bootstrapTransferService = bootstrapTransferService;
         this.nodeProperties = nodeProperties;
         this.controlPlaneClient = controlPlaneClient;
     }
@@ -61,7 +66,13 @@ public class JoinService {
         membershipService.mergeRemoteMembership(response.membership());
         membershipService.updateHeartbeat(nodeProperties.getNodeId(), nodeProperties.getAddress(), 0);
 
+        List<MemberRecord> previousMembership = membershipService.getMembershipSnapshot().stream()
+                .filter(member -> !nodeProperties.getNodeId().equals(member.nodeId()))
+                .toList();
+
+        hashRingService.rebuildRing(previousMembership);
         List<TokenRange> previousRanges = hashRingService.getOwnedTokenRanges(nodeProperties.getNodeId());
+
         virtualNodeService.generateTokens(nodeProperties.getNodeId(), nodeProperties.getVirtualNodeCount());
         hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
         List<TokenRange> currentRanges = hashRingService.getOwnedTokenRanges(nodeProperties.getNodeId());
@@ -72,11 +83,38 @@ public class JoinService {
                 nodeProperties.getNodeId()
         );
 
-        bootstrapState.set(newRanges.isEmpty() ? JOINED : REBALANCING);
+        if (newRanges.isEmpty()) {
+            bootstrapState.set(JOINED);
+            return newRanges;
+        }
+
+        bootstrapState.set(REBALANCING);
+        Map<TokenRange, String> donorNodeIds = donorNodeIdsForRanges(previousMembership, newRanges);
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        bootstrapTransferService.transferNewRanges(newRanges, donorNodeIds, nodeProperties.getNodeId());
+        bootstrapState.set(JOINED);
         return newRanges;
     }
 
     public com.orionkv.controlplane.bootstrap.model.BootstrapState getBootstrapState() {
         return bootstrapState.get();
+    }
+
+    private Map<TokenRange, String> donorNodeIdsForRanges(
+            List<MemberRecord> previousMembership,
+            List<TokenRange> newRanges
+    ) {
+        hashRingService.rebuildRing(previousMembership);
+        Map<String, String> previousAddressesByNodeId = previousMembership.stream()
+                .collect(java.util.stream.Collectors.toMap(MemberRecord::nodeId, MemberRecord::address, (left, right) -> left));
+        Map<TokenRange, String> donorNodeIds = newRanges.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        range -> range,
+                        range -> hashRingService.findOwnerForToken(range.endInclusive())
+                                .map(previousAddressesByNodeId::get)
+                                .orElse(null)
+                ));
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        return donorNodeIds;
     }
 }

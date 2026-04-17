@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Optional;
 import java.util.TreeMap;
 
 @Service
@@ -82,6 +83,19 @@ public class HashRingService {
         }
 
         return ranges;
+    }
+
+    public synchronized Optional<String> findOwnerForToken(long token) {
+        if (ring.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Long ownerToken = ring.ceilingKey(token);
+        if (ownerToken == null) {
+            ownerToken = ring.firstKey();
+        }
+
+        return Optional.ofNullable(ring.get(ownerToken));
     }
 
     private void collectReplicas(NavigableMap<Long, String> tokenMap, LinkedHashSet<String> replicas) {

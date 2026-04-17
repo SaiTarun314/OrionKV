@@ -16,6 +16,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -79,6 +81,76 @@ class ReplicaStreamIntegrationTest {
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.records[0].key").value(key))
                 .andExpect(jsonPath("$.records[0].sourceNodeId").value("node-2"));
+    }
+
+    @Test
+    void pagedStreamingTransfersMetadataAndSupportsIdempotentRetry() throws Exception {
+        List<KeyTokenPair> keys = findDistinctKeys(2);
+        KeyTokenPair first = keys.get(0);
+        KeyTokenPair second = keys.get(1);
+
+        storageService.put(first.key(), "first-value", 100L);
+        storageService.delete(second.key(), 300L);
+
+        mockMvc.perform(post("/internal/stream_range")
+                        .contentType(APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "startToken": %d,
+                                  "endToken": %d,
+                                  "batchSize": 1
+                                }
+                                """.formatted(first.token(), second.token())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries.length()").value(1))
+                .andExpect(jsonPath("$.entries[0].key").value(first.key()))
+                .andExpect(jsonPath("$.entries[0].is_deleted").value(false))
+                .andExpect(jsonPath("$.next_cursor").value("1"))
+                .andExpect(jsonPath("$.done").value(false));
+
+        mockMvc.perform(post("/internal/stream_range")
+                        .contentType(APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "startToken": %d,
+                                  "endToken": %d,
+                                  "batchSize": 1,
+                                  "cursor": "1"
+                                }
+                                """.formatted(first.token(), second.token())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries.length()").value(1))
+                .andExpect(jsonPath("$.entries[0].key").value(second.key()))
+                .andExpect(jsonPath("$.entries[0].is_deleted").value(true))
+                .andExpect(jsonPath("$.done").value(true));
+
+        String batchPayload = """
+                {
+                  "records": [
+                    {
+                      "key": "%s",
+                      "value": "%s",
+                      "timestamp": 100,
+                      "tombstone": false,
+                      "token": %d
+                    },
+                    {
+                      "key": "%s",
+                      "value": null,
+                      "timestamp": 300,
+                      "tombstone": true,
+                      "token": %d
+                    }
+                  ]
+                }
+                """.formatted(first.key(), "first-value", first.token(), second.key(), second.token());
+
+        mockMvc.perform(post("/internal/replica/apply-batch")
+                        .contentType(APPLICATION_JSON)
+                        .content(batchPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.appliedCount").value(0))
+                .andExpect(jsonPath("$.ignoredCount").value(2));
     }
 
     private List<KeyTokenPair> findDistinctKeys(int count) {

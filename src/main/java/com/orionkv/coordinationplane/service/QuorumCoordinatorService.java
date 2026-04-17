@@ -53,7 +53,16 @@ public class QuorumCoordinatorService {
         int ackCount = 0;
         for (String replicaNodeId : route.replicaNodeIds()) {
             if (isLocalNode(replicaNodeId)) {
-                storageService.put(key, value, writeTimestamp);
+                storageService.applyReplicaWrite(
+                        new ReplicaRecord(
+                                key,
+                                value,
+                                writeTimestamp,
+                                false,
+                                route.primaryToken(),
+                                nodeProperties.getNodeId()
+                        )
+                );
                 ackCount++;
                 continue;
             }
