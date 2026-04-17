@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class LocalStorageService implements StorageService {
@@ -52,9 +53,14 @@ public class LocalStorageService implements StorageService {
 
     @Override
     public StoredValue get(String key) {
-        return inMemoryStorageIndex.get(key)
+        return getVersioned(key)
                 .filter(value -> !value.tombstone())
                 .orElseThrow(() -> new KeyNotFoundException(key));
+    }
+
+    @Override
+    public Optional<StoredValue> getVersioned(String key) {
+        return inMemoryStorageIndex.get(key);
     }
 
     @Override
@@ -67,9 +73,30 @@ public class LocalStorageService implements StorageService {
     @Override
     public List<StoredValue> scanRange(long startToken, long endToken) {
         return inMemoryStorageIndex.scanRange(startToken, endToken).stream()
-                .filter(value -> !value.tombstone())
                 .sorted(rangeComparator(startToken, endToken))
                 .toList();
+    }
+
+    @Override
+    public List<StoredValue> scanActiveRange(long startToken, long endToken) {
+        return scanRange(startToken, endToken).stream()
+                .filter(value -> !value.tombstone())
+                .toList();
+    }
+
+    @Override
+    public ReplicaStreamPage scanRangePage(long startToken, long endToken, int batchSize, String cursor) {
+        int resolvedBatchSize = batchSize <= 0 ? 100 : batchSize;
+        int startIndex = parseCursor(cursor);
+        List<StoredValue> values = scanRange(startToken, endToken);
+
+        if (startIndex >= values.size()) {
+            return new ReplicaStreamPage(List.of(), null, true);
+        }
+
+        int endIndex = Math.min(startIndex + resolvedBatchSize, values.size());
+        String nextCursor = endIndex < values.size() ? Integer.toString(endIndex) : null;
+        return new ReplicaStreamPage(values.subList(startIndex, endIndex), nextCursor, endIndex >= values.size());
     }
 
     @Override
@@ -150,5 +177,21 @@ public class LocalStorageService implements StorageService {
                 replicaRecord.timestamp(),
                 replicaRecord.token()
         );
+    }
+
+    private int parseCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return 0;
+        }
+
+        try {
+            int parsed = Integer.parseInt(cursor);
+            if (parsed < 0) {
+                throw new IllegalArgumentException("cursor must be non-negative");
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("cursor must be a numeric offset", ex);
+        }
     }
 }
