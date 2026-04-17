@@ -140,6 +140,15 @@ public class LocalStorageService implements StorageService {
         return result;
     }
 
+    @Override
+    public void resetLocalState() {
+        synchronized (mutationLock) {
+            persistentStorage.reset();
+            inMemoryStorageIndex.clear();
+        }
+        log.info("Reset local storage state and cleared persisted WAL");
+    }
+
     private StoredValue applyMutation(WriteAheadLogEntry entry) {
         return persistAndApply(entry).storedValue();
     }

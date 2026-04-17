@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 @Service
@@ -18,6 +19,7 @@ public class MembershipService {
 
     private final ConcurrentHashMap<String, MemberRecord> members = new ConcurrentHashMap<>();
     private final Clock clock;
+    private final AtomicLong topologyVersion = new AtomicLong();
 
     public MembershipService() {
         this(Clock.systemUTC());
@@ -39,11 +41,21 @@ public class MembershipService {
         return Map.copyOf(members);
     }
 
+    public long getTopologyVersion() {
+        return topologyVersion.get();
+    }
+
     public MemberRecord mergeRemoteMembership(MemberRecord remoteRecord) {
         validate(remoteRecord);
-        return members.compute(remoteRecord.nodeId(), (nodeId, localRecord) ->
-                shouldReplace(localRecord, remoteRecord) ? remoteRecord : localRecord
-        );
+        return members.compute(remoteRecord.nodeId(), (nodeId, localRecord) -> {
+            if (!shouldReplace(localRecord, remoteRecord)) {
+                return localRecord;
+            }
+            if (topologyChanged(localRecord, remoteRecord)) {
+                topologyVersion.incrementAndGet();
+            }
+            return remoteRecord;
+        });
     }
 
     public List<MemberRecord> mergeRemoteMembership(Collection<MemberRecord> remoteMembership) {
@@ -65,20 +77,44 @@ public class MembershipService {
                 nextIncarnation = Math.max(nextIncarnation, existing.incarnation() + 1);
             }
             String nextAddress = address != null ? address : existing == null ? null : existing.address();
-            return new MemberRecord(id, nextAddress, MemberStatus.ALIVE, nextIncarnation, now);
+            MemberRecord nextRecord = new MemberRecord(id, nextAddress, MemberStatus.ALIVE, nextIncarnation, now);
+            if (topologyChanged(existing, nextRecord)) {
+                topologyVersion.incrementAndGet();
+            }
+            return nextRecord;
         });
     }
 
     public MemberRecord markSuspect(String nodeId) {
-        return members.computeIfPresent(nodeId, (id, existing) ->
-                new MemberRecord(id, existing.address(), MemberStatus.SUSPECT, existing.incarnation(), existing.lastSeen())
-        );
+        return members.computeIfPresent(nodeId, (id, existing) -> {
+            MemberRecord updated = new MemberRecord(
+                    id,
+                    existing.address(),
+                    MemberStatus.SUSPECT,
+                    existing.incarnation(),
+                    existing.lastSeen()
+            );
+            if (topologyChanged(existing, updated)) {
+                topologyVersion.incrementAndGet();
+            }
+            return updated;
+        });
     }
 
     public MemberRecord markDead(String nodeId) {
-        return members.computeIfPresent(nodeId, (id, existing) ->
-                new MemberRecord(id, existing.address(), MemberStatus.DEAD, existing.incarnation(), existing.lastSeen())
-        );
+        return members.computeIfPresent(nodeId, (id, existing) -> {
+            MemberRecord updated = new MemberRecord(
+                    id,
+                    existing.address(),
+                    MemberStatus.DEAD,
+                    existing.incarnation(),
+                    existing.lastSeen()
+            );
+            if (topologyChanged(existing, updated)) {
+                topologyVersion.incrementAndGet();
+            }
+            return updated;
+        });
     }
 
     private boolean shouldReplace(MemberRecord localRecord, MemberRecord remoteRecord) {
@@ -116,5 +152,18 @@ public class MembershipService {
         if (record.lastSeen() == null) {
             throw new IllegalArgumentException("lastSeen must not be null");
         }
+    }
+
+    private boolean topologyChanged(MemberRecord existing, MemberRecord updated) {
+        if (updated == null) {
+            return false;
+        }
+        if (existing == null) {
+            return true;
+        }
+        if (existing.status() != updated.status()) {
+            return true;
+        }
+        return !java.util.Objects.equals(existing.address(), updated.address());
     }
 }

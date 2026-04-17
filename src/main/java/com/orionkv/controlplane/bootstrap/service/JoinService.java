@@ -4,8 +4,10 @@ import com.orionkv.common.dto.GossipResponse;
 import com.orionkv.common.dto.JoinRequest;
 import com.orionkv.common.rpc.ControlPlaneClient;
 import com.orionkv.config.NodeProperties;
+import com.orionkv.dataplane.service.StorageService;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.membership.model.MemberRecord;
+import com.orionkv.controlplane.membership.model.MemberStatus;
 import com.orionkv.controlplane.ring.model.TokenRange;
 import com.orionkv.controlplane.ring.service.HashRingService;
 import com.orionkv.controlplane.ring.service.VirtualNodeService;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.orionkv.controlplane.bootstrap.model.BootstrapState.JOINED;
@@ -28,6 +31,7 @@ public class JoinService {
     private final VirtualNodeService virtualNodeService;
     private final RebalanceService rebalanceService;
     private final BootstrapTransferService bootstrapTransferService;
+    private final StorageService storageService;
     private final NodeProperties nodeProperties;
     private final ControlPlaneClient controlPlaneClient;
     private final AtomicReference<com.orionkv.controlplane.bootstrap.model.BootstrapState> bootstrapState =
@@ -39,6 +43,7 @@ public class JoinService {
             VirtualNodeService virtualNodeService,
             RebalanceService rebalanceService,
             BootstrapTransferService bootstrapTransferService,
+            StorageService storageService,
             NodeProperties nodeProperties,
             ControlPlaneClient controlPlaneClient
     ) {
@@ -47,12 +52,15 @@ public class JoinService {
         this.virtualNodeService = virtualNodeService;
         this.rebalanceService = rebalanceService;
         this.bootstrapTransferService = bootstrapTransferService;
+        this.storageService = storageService;
         this.nodeProperties = nodeProperties;
         this.controlPlaneClient = controlPlaneClient;
     }
 
     public List<TokenRange> joinCluster(String seedAddress) {
         bootstrapState.set(JOINING);
+
+        resetLocalStateIfReturningFromDead(seedAddress);
 
         GossipResponse response = controlPlaneClient.join(
                 seedAddress,
@@ -63,19 +71,49 @@ public class JoinService {
             throw new IllegalStateException("Seed node returned no join response");
         }
 
-        membershipService.mergeRemoteMembership(response.membership());
-        membershipService.updateHeartbeat(nodeProperties.getNodeId(), nodeProperties.getAddress(), 0);
+        virtualNodeService.generateTokens(nodeProperties.getNodeId(), nodeProperties.getVirtualNodeCount());
 
-        List<MemberRecord> previousMembership = membershipService.getMembershipSnapshot().stream()
+        List<TokenRange> accumulatedRanges = new ArrayList<>();
+        List<MemberRecord> currentSnapshot = snapshotWithSelf(response.membership());
+        List<MemberRecord> previousSnapshot = currentSnapshot.stream()
                 .filter(member -> !nodeProperties.getNodeId().equals(member.nodeId()))
                 .toList();
+        long observedTopologyVersion = response.topologyVersion();
 
+        while (true) {
+            membershipService.mergeRemoteMembership(currentSnapshot);
+            membershipService.updateHeartbeat(nodeProperties.getNodeId(), nodeProperties.getAddress(), 0);
+
+            List<TokenRange> newRanges = transferNewRanges(previousSnapshot, currentSnapshot);
+            newRanges.stream()
+                    .filter(range -> !accumulatedRanges.contains(range))
+                    .forEach(accumulatedRanges::add);
+
+            GossipResponse latestResponse = controlPlaneClient.getMembership(seedAddress);
+            if (latestResponse == null || latestResponse.topologyVersion() <= observedTopologyVersion) {
+                bootstrapState.set(JOINED);
+                return accumulatedRanges;
+            }
+
+            bootstrapState.set(REBALANCING);
+            previousSnapshot = currentSnapshot;
+            currentSnapshot = snapshotWithSelf(latestResponse.membership());
+            observedTopologyVersion = latestResponse.topologyVersion();
+        }
+    }
+
+    public com.orionkv.controlplane.bootstrap.model.BootstrapState getBootstrapState() {
+        return bootstrapState.get();
+    }
+
+    private List<TokenRange> transferNewRanges(
+            List<MemberRecord> previousMembership,
+            List<MemberRecord> currentMembership
+    ) {
         hashRingService.rebuildRing(previousMembership);
-        List<TokenRange> previousRanges = hashRingService.getOwnedTokenRanges(nodeProperties.getNodeId());
-
-        virtualNodeService.generateTokens(nodeProperties.getNodeId(), nodeProperties.getVirtualNodeCount());
-        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
-        List<TokenRange> currentRanges = hashRingService.getOwnedTokenRanges(nodeProperties.getNodeId());
+        List<TokenRange> previousRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+        hashRingService.rebuildRing(currentMembership);
+        List<TokenRange> currentRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
 
         List<TokenRange> newRanges = rebalanceService.detectNewRangesForNode(
                 previousRanges,
@@ -84,37 +122,69 @@ public class JoinService {
         );
 
         if (newRanges.isEmpty()) {
-            bootstrapState.set(JOINED);
             return newRanges;
         }
 
         bootstrapState.set(REBALANCING);
-        Map<TokenRange, String> donorNodeIds = donorNodeIdsForRanges(previousMembership, newRanges);
-        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        Map<TokenRange, String> donorNodeIds = donorNodeIdsForRanges(previousMembership, currentMembership, newRanges);
+        hashRingService.rebuildRing(currentMembership);
         bootstrapTransferService.transferNewRanges(newRanges, donorNodeIds, nodeProperties.getNodeId());
-        bootstrapState.set(JOINED);
         return newRanges;
-    }
-
-    public com.orionkv.controlplane.bootstrap.model.BootstrapState getBootstrapState() {
-        return bootstrapState.get();
     }
 
     private Map<TokenRange, String> donorNodeIdsForRanges(
             List<MemberRecord> previousMembership,
+            List<MemberRecord> currentMembership,
             List<TokenRange> newRanges
     ) {
-        hashRingService.rebuildRing(previousMembership);
-        Map<String, String> previousAddressesByNodeId = previousMembership.stream()
-                .collect(java.util.stream.Collectors.toMap(MemberRecord::nodeId, MemberRecord::address, (left, right) -> left));
+        Map<String, MemberRecord> currentMembersByNodeId = currentMembership.stream()
+                .collect(java.util.stream.Collectors.toMap(MemberRecord::nodeId, member -> member, (left, right) -> left));
         Map<TokenRange, String> donorNodeIds = newRanges.stream()
                 .collect(java.util.stream.Collectors.toMap(
                         range -> range,
-                        range -> hashRingService.findOwnerForToken(range.endInclusive())
-                                .map(previousAddressesByNodeId::get)
-                                .orElse(null)
+                        range -> {
+                            hashRingService.rebuildRing(previousMembership);
+                            return hashRingService.findReplicasForToken(range.endInclusive()).replicaNodeIds().stream()
+                                    .filter(candidateNodeId -> !candidateNodeId.equals(nodeProperties.getNodeId()))
+                                    .map(currentMembersByNodeId::get)
+                                    .filter(candidate -> candidate != null && candidate.status() == MemberStatus.ALIVE)
+                                    .map(MemberRecord::address)
+                                    .findFirst()
+                                    .orElse(null);
+                        }
                 ));
-        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        hashRingService.rebuildRing(currentMembership);
         return donorNodeIds;
+    }
+
+    private List<MemberRecord> snapshotWithSelf(List<MemberRecord> membership) {
+        List<MemberRecord> snapshot = new ArrayList<>();
+        if (membership != null) {
+            snapshot.addAll(membership.stream()
+                    .filter(member -> !nodeProperties.getNodeId().equals(member.nodeId()))
+                    .toList());
+        }
+        snapshot.add(new MemberRecord(
+                nodeProperties.getNodeId(),
+                nodeProperties.getAddress(),
+                MemberStatus.ALIVE,
+                0L,
+                java.time.Instant.now()
+        ));
+        return snapshot;
+    }
+
+    private void resetLocalStateIfReturningFromDead(String seedAddress) {
+        GossipResponse currentClusterState = controlPlaneClient.getMembership(seedAddress);
+        if (currentClusterState == null || currentClusterState.membership() == null) {
+            return;
+        }
+
+        boolean returningFromDead = currentClusterState.membership().stream()
+                .anyMatch(member -> member.nodeId().equals(nodeProperties.getNodeId()) && member.status() == MemberStatus.DEAD);
+
+        if (returningFromDead) {
+            storageService.resetLocalState();
+        }
     }
 }

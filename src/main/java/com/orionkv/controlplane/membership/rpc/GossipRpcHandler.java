@@ -31,7 +31,8 @@ public class GossipRpcHandler extends GossipRpcGrpc.GossipRpcImplBase {
         );
         responseObserver.onNext(ProtoMapper.toProto(new GossipResponse(
                 nodeProperties.getNodeId(),
-                membershipService.getMembershipSnapshot().stream().toList()
+                membershipService.getMembershipSnapshot().stream().toList(),
+                membershipService.getTopologyVersion()
         )));
         responseObserver.onCompleted();
     }

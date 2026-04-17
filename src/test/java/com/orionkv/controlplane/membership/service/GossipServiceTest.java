@@ -59,7 +59,7 @@ class GossipServiceTest {
         public GossipResponse gossip(String peerAddress, GossipRequest request) {
             this.peerAddress = peerAddress;
             this.request = request;
-            return new GossipResponse("node-a", java.util.List.of());
+            return new GossipResponse("node-a", java.util.List.of(), 0L);
         }
 
         @Override

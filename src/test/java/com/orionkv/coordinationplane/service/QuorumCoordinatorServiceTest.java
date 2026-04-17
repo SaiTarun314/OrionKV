@@ -124,6 +124,10 @@ class QuorumCoordinatorServiceTest {
         public BatchApplyResult applyReplicaBatch(List<ReplicaRecord> replicaRecords) {
             return new BatchApplyResult(replicaRecords.size(), replicaRecords.size(), 0);
         }
+
+        @Override
+        public void resetLocalState() {
+        }
     }
 
     private static final class StubReplicaDataClient implements ReplicaDataClient {

@@ -116,5 +116,9 @@ class BootstrapTransferServiceTest {
             appliedRecords.addAll(records);
             return new BatchApplyResult(records.size(), records.size(), 0);
         }
+
+        @Override
+        public void resetLocalState() {
+        }
     }
 }
