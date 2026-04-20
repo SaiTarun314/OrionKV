@@ -22,6 +22,6 @@ public class InternalStorageController {
     @GetMapping("/range")
     @ResponseStatus(HttpStatus.OK)
     public RangeScanResponse scanRange(@RequestParam long startToken, @RequestParam long endToken) {
-        return RangeScanResponse.from(startToken, endToken, storageService.scanRange(startToken, endToken));
+        return RangeScanResponse.from(startToken, endToken, storageService.scanActiveRange(startToken, endToken));
     }
 }

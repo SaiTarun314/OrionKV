@@ -1,17 +1,18 @@
 package com.orionkv.dataplane.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.orionkv.dataplane.model.StoredValue;
 
-public record RangeScanItemResponse(
+public record ReplicaVersionResponse(
         String key,
         String value,
         long timestamp,
-        boolean tombstone,
+        @JsonProperty("is_deleted")
+        boolean isDeleted,
         long token
 ) {
-
-    public static RangeScanItemResponse from(StoredValue storedValue) {
-        return new RangeScanItemResponse(
+    public static ReplicaVersionResponse from(StoredValue storedValue) {
+        return new ReplicaVersionResponse(
                 storedValue.key(),
                 storedValue.value(),
                 storedValue.timestamp(),

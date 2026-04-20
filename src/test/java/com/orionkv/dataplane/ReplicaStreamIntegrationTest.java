@@ -1,24 +1,25 @@
 package com.orionkv.dataplane;
 
-import com.orionkv.dataplane.model.ReplicaRecord;
-import com.orionkv.dataplane.service.StorageService;
-import com.orionkv.dataplane.util.TokenUtil;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.orionkv.dataplane.service.StorageService;
+import com.orionkv.dataplane.util.TokenUtil;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -60,25 +61,74 @@ class ReplicaStreamIntegrationTest {
     }
 
     @Test
-    void replicaStreamIncludesSourceNodeIdForReplicatedRecords() throws Exception {
-        String key = "replica-source-key";
-        long token = TokenUtil.tokenFor(key);
-        storageService.applyReplicaWrite(new ReplicaRecord(
-                key,
-                "replica-value",
-                200L,
-                false,
-                token,
-                "node-2"
-        ));
+    void pagedStreamingTransfersMetadataAndSupportsIdempotentRetry() throws Exception {
+        List<KeyTokenPair> keys = findDistinctKeys(2);
+        KeyTokenPair first = keys.get(0);
+        KeyTokenPair second = keys.get(1);
 
-        mockMvc.perform(get("/internal/replica/stream")
-                        .queryParam("startToken", Long.toString(token))
-                        .queryParam("endToken", Long.toString(token)))
+        storageService.put(first.key(), "first-value", 100L);
+        storageService.put(second.key(), "second-value", 200L);
+        storageService.delete(second.key(), 300L);
+
+        mockMvc.perform(post("/internal/stream_range")
+                        .contentType(APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "startToken": %d,
+                                  "endToken": %d,
+                                  "batchSize": 1
+                                }
+                                """.formatted(first.token(), second.token())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.count").value(1))
-                .andExpect(jsonPath("$.records[0].key").value(key))
-                .andExpect(jsonPath("$.records[0].sourceNodeId").value("node-2"));
+                .andExpect(jsonPath("$.entries.length()").value(1))
+                .andExpect(jsonPath("$.entries[0].key").value(first.key()))
+                .andExpect(jsonPath("$.entries[0].is_deleted").value(false))
+                .andExpect(jsonPath("$.next_cursor").value("1"))
+                .andExpect(jsonPath("$.done").value(false));
+
+        mockMvc.perform(post("/internal/stream_range")
+                        .contentType(APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "startToken": %d,
+                                  "endToken": %d,
+                                  "batchSize": 1,
+                                  "cursor": "1"
+                                }
+                                """.formatted(first.token(), second.token())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries.length()").value(1))
+                .andExpect(jsonPath("$.entries[0].key").value(second.key()))
+                .andExpect(jsonPath("$.entries[0].is_deleted").value(true))
+                .andExpect(jsonPath("$.done").value(true));
+
+        String batchPayload = """
+                {
+                  "records": [
+                    {
+                      "key": "%s",
+                      "value": "%s",
+                      "timestamp": 100,
+                      "tombstone": false,
+                      "token": %d
+                    },
+                    {
+                      "key": "%s",
+                      "value": null,
+                      "timestamp": 300,
+                      "tombstone": true,
+                      "token": %d
+                    }
+                  ]
+                }
+                """.formatted(first.key(), "first-value", first.token(), second.key(), second.token());
+
+        mockMvc.perform(post("/internal/replica/apply-batch")
+                        .contentType(APPLICATION_JSON)
+                        .content(batchPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.appliedCount").value(0))
+                .andExpect(jsonPath("$.ignoredCount").value(2));
     }
 
     private List<KeyTokenPair> findDistinctKeys(int count) {

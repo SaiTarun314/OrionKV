@@ -2,10 +2,10 @@ package com.orionkv.dataplane.storage;
 
 import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.model.WriteAheadLogEntry;
+import com.orionkv.dataplane.util.VersionOrdering;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -59,19 +59,7 @@ public class InMemoryStorageIndex {
     }
 
     private int compare(WriteAheadLogEntry entry, StoredValue existingValue) {
-        int timestampComparison = Long.compare(entry.timestamp(), existingValue.timestamp());
-        if (timestampComparison != 0) {
-            return timestampComparison;
-        }
-
-        int tombstoneComparison = Boolean.compare(entry.tombstone(), existingValue.tombstone());
-        if (tombstoneComparison != 0) {
-            return tombstoneComparison;
-        }
-
-        String incomingValue = Objects.toString(entry.value(), "");
-        String existingStoredValue = Objects.toString(existingValue.value(), "");
-        return incomingValue.compareTo(existingStoredValue);
+        return VersionOrdering.compare(entry, existingValue);
     }
 
     private StoredValue toStoredValue(WriteAheadLogEntry entry) {
