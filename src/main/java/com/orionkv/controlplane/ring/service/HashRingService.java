@@ -108,6 +108,23 @@ public class HashRingService {
         return ranges;
     }
 
+    public synchronized List<TokenRange> getAllPrimaryRanges() {
+        if (ring.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map.Entry<Long, String>> entries = new ArrayList<>(ring.entrySet());
+        List<TokenRange> ranges = new ArrayList<>();
+
+        for (int i = 0; i < entries.size(); i++) {
+            Map.Entry<Long, String> current = entries.get(i);
+            Map.Entry<Long, String> previous = i == 0 ? entries.get(entries.size() - 1) : entries.get(i - 1);
+            ranges.add(new TokenRange(previous.getKey(), current.getKey(), current.getValue()));
+        }
+
+        return ranges;
+    }
+
     public synchronized Optional<String> findOwnerForToken(long token) {
         if (ring.isEmpty()) {
             return Optional.empty();

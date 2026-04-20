@@ -1,6 +1,7 @@
 package com.orionkv.controlplane.bootstrap.service;
 
 import com.orionkv.config.NodeProperties;
+import com.orionkv.controlplane.bootstrap.model.PrimaryOwnershipMovement;
 import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.model.MemberStatus;
 import com.orionkv.controlplane.membership.service.MembershipService;
@@ -74,49 +75,91 @@ public class FailureRebalanceService {
                 .toList();
 
         hashRingService.rebuildRing(previousMembership);
-        List<TokenRange> previousReplicaRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+        List<TokenRange> previousPrimaryRanges = hashRingService.getAllPrimaryRanges();
 
         hashRingService.rebuildRing(currentMembership);
-        List<TokenRange> currentReplicaRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+        List<TokenRange> currentPrimaryRanges = hashRingService.getAllPrimaryRanges();
 
-        List<TokenRange> newRanges = rebalanceService.detectNewRangesForNode(
-                previousReplicaRanges,
-                currentReplicaRanges,
+        List<PrimaryOwnershipMovement> movementPlans = rebalanceService.computePrimaryOwnershipDiff(
+                previousPrimaryRanges,
+                currentPrimaryRanges
+        );
+        List<PrimaryOwnershipMovement> incomingPlans = rebalanceService.movementsForTargetNode(
+                movementPlans,
                 nodeProperties.getNodeId()
         );
+        List<TokenRange> newRanges = incomingPlans.stream()
+                .map(plan -> new TokenRange(plan.startToken(), plan.endToken(), nodeProperties.getNodeId()))
+                .toList();
 
         if (newRanges.isEmpty()) {
             return;
         }
 
-        Map<TokenRange, String> donorAddresses = donorAddressesForRanges(previousMembership, currentMembership, newRanges, deadMember);
+        Map<TokenRange, String> donorAddresses =
+                donorAddressesForMovements(previousMembership, currentMembership, incomingPlans, deadMember);
         hashRingService.rebuildRing(currentMembership);
         bootstrapTransferService.transferNewRanges(newRanges, donorAddresses, nodeProperties.getNodeId());
     }
 
-    private Map<TokenRange, String> donorAddressesForRanges(
+    private Map<TokenRange, String> donorAddressesForMovements(
             List<MemberRecord> previousMembership,
             List<MemberRecord> currentMembership,
-            List<TokenRange> newRanges,
+            List<PrimaryOwnershipMovement> incomingPlans,
             MemberRecord deadMember
     ) {
+        Map<String, MemberRecord> previousMembersByNodeId = previousMembership.stream()
+                .collect(java.util.stream.Collectors.toMap(MemberRecord::nodeId, member -> member, (left, right) -> left));
         Map<String, MemberRecord> currentMembersByNodeId = currentMembership.stream()
                 .collect(java.util.stream.Collectors.toMap(MemberRecord::nodeId, member -> member, (left, right) -> left));
 
         hashRingService.rebuildRing(previousMembership);
-        Map<TokenRange, String> donorAddresses = newRanges.stream()
+        Map<TokenRange, String> donorAddresses = incomingPlans.stream()
                 .collect(java.util.stream.Collectors.toMap(
-                        range -> range,
-                        range -> hashRingService.findReplicasForToken(range.endInclusive()).replicaNodeIds().stream()
+                        plan -> new TokenRange(plan.startToken(), plan.endToken(), nodeProperties.getNodeId()),
+                        plan -> {
+                            String preferredSourceAddress =
+                                    resolveAddress(plan.sourceNodeId(), previousMembersByNodeId, currentMembersByNodeId, deadMember);
+                            if (preferredSourceAddress != null) {
+                                return preferredSourceAddress;
+                            }
+
+                            return hashRingService.findReplicasForToken(plan.endToken()).replicaNodeIds().stream()
                                 .filter(candidateNodeId -> !candidateNodeId.equals(deadMember.nodeId()))
                                 .filter(candidateNodeId -> !candidateNodeId.equals(nodeProperties.getNodeId()))
-                                .map(currentMembersByNodeId::get)
-                                .filter(candidate -> candidate != null && candidate.status() == MemberStatus.ALIVE)
-                                .map(MemberRecord::address)
+                                .map(candidateNodeId ->
+                                        resolveAddress(candidateNodeId, previousMembersByNodeId, currentMembersByNodeId, deadMember))
+                                .filter(address -> address != null && !address.isBlank())
                                 .findFirst()
-                                .orElse(null)
+                                .orElse(null);
+                        }
                 ));
         hashRingService.rebuildRing(currentMembership);
         return donorAddresses;
+    }
+
+    private String resolveAddress(
+            String nodeId,
+            Map<String, MemberRecord> previousMembersByNodeId,
+            Map<String, MemberRecord> currentMembersByNodeId,
+            MemberRecord deadMember
+    ) {
+        if (nodeId == null || nodeId.equals(nodeProperties.getNodeId()) || nodeId.equals(deadMember.nodeId())) {
+            return null;
+        }
+
+        MemberRecord current = currentMembersByNodeId.get(nodeId);
+        if (current != null && current.status() == MemberStatus.ALIVE
+                && current.address() != null && !current.address().isBlank()) {
+            return current.address();
+        }
+
+        MemberRecord previous = previousMembersByNodeId.get(nodeId);
+        if (previous != null && previous.status() == MemberStatus.ALIVE
+                && previous.address() != null && !previous.address().isBlank()) {
+            return previous.address();
+        }
+
+        return null;
     }
 }

@@ -96,11 +96,13 @@ class FailureRebalanceServiceTest {
                     .toList();
 
             hashRingService.rebuildRing(previousMembership);
-            List<TokenRange> previousRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+            List<TokenRange> previousRanges = hashRingService.getAllPrimaryRanges();
             hashRingService.rebuildRing(currentMembership);
-            List<TokenRange> currentRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+            List<TokenRange> currentRanges = hashRingService.getAllPrimaryRanges();
 
-            if (!rebalanceService.detectNewRangesForNode(previousRanges, currentRanges, nodeProperties.getNodeId()).isEmpty()) {
+            List<com.orionkv.controlplane.bootstrap.model.PrimaryOwnershipMovement> plans =
+                    rebalanceService.computePrimaryOwnershipDiff(previousRanges, currentRanges);
+            if (!rebalanceService.movementsForTargetNode(plans, nodeProperties.getNodeId()).isEmpty()) {
                 hashRingService.rebuildRing(snapshot);
                 return candidate;
             }
