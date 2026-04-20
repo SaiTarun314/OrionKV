@@ -253,3 +253,16 @@ This flow will:
 - bulk-load data through quorum writes
 - run membership smoke checks
 - run replica balance/staleness audit
+
+Docker reset / restart:
+
+```bash
+# Stop cluster only
+./scripts/docker-cluster-down.sh
+
+# Stop cluster and wipe docker state
+./scripts/docker-cluster-reset.sh
+
+# Full rebuild + restart
+NODE_COUNT=25 VIRTUAL_NODE_COUNT=128 ./scripts/docker-cluster-restart.sh
+```
