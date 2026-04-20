@@ -1,5 +1,13 @@
 package com.orionkv.dataplane.service;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
 import com.orionkv.dataplane.exception.KeyNotFoundException;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
@@ -8,14 +16,8 @@ import com.orionkv.dataplane.storage.ApplyResult;
 import com.orionkv.dataplane.storage.InMemoryStorageIndex;
 import com.orionkv.dataplane.storage.PersistentStorage;
 import com.orionkv.dataplane.util.TokenUtil;
-import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
+import jakarta.annotation.PostConstruct;
 
 @Service
 public class LocalStorageService implements StorageService {
@@ -54,6 +56,7 @@ public class LocalStorageService implements StorageService {
     @Override
     public StoredValue get(String key) {
         return getVersioned(key)
+                .filter(value -> !value.tombstone())
                 .orElseThrow(() -> new KeyNotFoundException(key));
     }
 

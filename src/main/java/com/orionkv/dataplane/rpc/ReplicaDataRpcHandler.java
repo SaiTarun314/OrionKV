@@ -1,8 +1,9 @@
 package com.orionkv.dataplane.rpc;
 
+import org.springframework.stereotype.Component;
+
 import com.orionkv.config.NodeProperties;
 import com.orionkv.dataplane.model.ReplicaRecord;
-import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.service.ReplicaApplyResult;
 import com.orionkv.dataplane.service.StorageService;
 import com.orionkv.proto.ReplicaDataRpcGrpc;
@@ -13,8 +14,8 @@ import com.orionkv.proto.ReplicaPutResponse;
 import com.orionkv.proto.ReplicaRangeRequest;
 import com.orionkv.proto.ReplicaRangeResponse;
 import com.orionkv.proto.ReplicaRecordProto;
+
 import io.grpc.stub.StreamObserver;
-import org.springframework.stereotype.Component;
 
 @Component
 public class ReplicaDataRpcHandler extends ReplicaDataRpcGrpc.ReplicaDataRpcImplBase {

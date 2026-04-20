@@ -1,18 +1,19 @@
 package com.orionkv.coordinationplane.service;
 
-import com.orionkv.coordinationplane.model.ReplicaRoute;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
+
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.ring.service.HashRingService;
 import com.orionkv.controlplane.ring.service.VirtualNodeService;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.List;
-import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import com.orionkv.coordinationplane.model.ReplicaRoute;
 
 class ReplicaRoutingServiceTest {
 

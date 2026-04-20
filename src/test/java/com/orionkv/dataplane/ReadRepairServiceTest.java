@@ -1,17 +1,17 @@
 package com.orionkv.dataplane;
 
-import com.orionkv.dataplane.model.StoredValue;
-import com.orionkv.dataplane.service.ReadRepairService;
-import com.orionkv.dataplane.service.ReplicaNodeVersion;
-import com.orionkv.dataplane.service.ReplicaRepairClient;
-import com.orionkv.dataplane.service.ReplicaVersionResolver;
-import org.junit.jupiter.api.Test;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+
+import com.orionkv.dataplane.model.StoredValue;
+import com.orionkv.dataplane.service.ReadRepairService;
+import com.orionkv.dataplane.service.ReplicaNodeVersion;
+import com.orionkv.dataplane.service.ReplicaRepairClient;
+import com.orionkv.dataplane.service.ReplicaVersionResolver;
 
 class ReadRepairServiceTest {
 
