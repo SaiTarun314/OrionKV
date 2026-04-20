@@ -72,9 +72,11 @@ class MembershipServiceTest {
     void shouldMarkMembersSuspectAndDead() {
         membershipService.updateHeartbeat("node-c", "10.0.0.4:8080", 1);
 
+        MemberRecord leaving = membershipService.markLeaving("node-c");
         MemberRecord suspect = membershipService.markSuspect("node-c");
         MemberRecord dead = membershipService.markDead("node-c");
 
+        assertThat(leaving.status()).isEqualTo(MemberStatus.LEAVING);
         assertThat(suspect.status()).isEqualTo(MemberStatus.SUSPECT);
         assertThat(dead.status()).isEqualTo(MemberStatus.DEAD);
     }

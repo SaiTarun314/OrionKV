@@ -84,6 +84,7 @@ public final class ProtoMapper {
     private static MemberStatusProto toProto(MemberStatus status) {
         return switch (status) {
             case ALIVE -> MemberStatusProto.ALIVE;
+            case LEAVING -> MemberStatusProto.LEAVING;
             case SUSPECT -> MemberStatusProto.SUSPECT;
             case DEAD -> MemberStatusProto.DEAD;
         };
@@ -91,6 +92,7 @@ public final class ProtoMapper {
 
     private static MemberStatus fromProto(MemberStatusProto status) {
         return switch (status) {
+            case LEAVING -> MemberStatus.LEAVING;
             case SUSPECT -> MemberStatus.SUSPECT;
             case DEAD -> MemberStatus.DEAD;
             case MEMBER_STATUS_UNSPECIFIED, ALIVE, UNRECOGNIZED -> MemberStatus.ALIVE;

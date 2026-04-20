@@ -1,6 +1,7 @@
 package com.orionkv.config;
 
 import com.orionkv.controlplane.bootstrap.rpc.ClusterRpcHandler;
+import com.orionkv.controlplane.bootstrap.service.GracefulLeaveService;
 import com.orionkv.controlplane.bootstrap.service.JoinService;
 import com.orionkv.controlplane.membership.rpc.GossipRpcHandler;
 import com.orionkv.controlplane.membership.service.MembershipService;
@@ -26,6 +27,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
     private final MembershipService membershipService;
     private final HashRingService hashRingService;
     private final JoinService joinService;
+    private final GracefulLeaveService gracefulLeaveService;
     private final GossipRpcHandler gossipRpcHandler;
     private final ClusterRpcHandler clusterRpcHandler;
     private final CoordinationRpcHandler coordinationRpcHandler;
@@ -37,6 +39,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
             MembershipService membershipService,
             HashRingService hashRingService,
             JoinService joinService,
+            GracefulLeaveService gracefulLeaveService,
             GossipRpcHandler gossipRpcHandler,
             ClusterRpcHandler clusterRpcHandler,
             CoordinationRpcHandler coordinationRpcHandler,
@@ -46,6 +49,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
         this.membershipService = membershipService;
         this.hashRingService = hashRingService;
         this.joinService = joinService;
+        this.gracefulLeaveService = gracefulLeaveService;
         this.gossipRpcHandler = gossipRpcHandler;
         this.clusterRpcHandler = clusterRpcHandler;
         this.coordinationRpcHandler = coordinationRpcHandler;
@@ -60,10 +64,16 @@ public class GrpcServerLifecycle implements ApplicationRunner {
             return;
         }
 
+        int grpcPort = nodeProperties.getPort();
+        if (grpcPort <= 0) {
+            log.info("Skipping gRPC control-plane startup because configured node port is {}", grpcPort);
+            return;
+        }
+
         membershipService.updateHeartbeat(nodeProperties.getNodeId(), nodeProperties.getAddress(), 0);
         hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
 
-        server = ServerBuilder.forPort(nodeProperties.getPort())
+        server = ServerBuilder.forPort(grpcPort)
                 .addService(gossipRpcHandler)
                 .addService(clusterRpcHandler)
                 .addService(coordinationRpcHandler)
@@ -73,6 +83,11 @@ public class GrpcServerLifecycle implements ApplicationRunner {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (server != null) {
+                try {
+                    gracefulLeaveService.leaveCluster();
+                } catch (RuntimeException ex) {
+                    log.warn("Graceful leave workflow failed during shutdown: {}", ex.getMessage());
+                }
                 server.shutdown();
             }
         }));

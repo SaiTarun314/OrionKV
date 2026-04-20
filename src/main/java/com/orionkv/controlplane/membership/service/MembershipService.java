@@ -101,6 +101,22 @@ public class MembershipService {
         });
     }
 
+    public MemberRecord markLeaving(String nodeId) {
+        return members.computeIfPresent(nodeId, (id, existing) -> {
+            MemberRecord updated = new MemberRecord(
+                    id,
+                    existing.address(),
+                    MemberStatus.LEAVING,
+                    existing.incarnation(),
+                    existing.lastSeen()
+            );
+            if (topologyChanged(existing, updated)) {
+                topologyVersion.incrementAndGet();
+            }
+            return updated;
+        });
+    }
+
     public MemberRecord markDead(String nodeId) {
         return members.computeIfPresent(nodeId, (id, existing) -> {
             MemberRecord updated = new MemberRecord(
@@ -137,8 +153,9 @@ public class MembershipService {
     private int statusPriority(MemberStatus status) {
         return switch (status) {
             case ALIVE -> 1;
-            case SUSPECT -> 2;
-            case DEAD -> 3;
+            case LEAVING -> 2;
+            case SUSPECT -> 3;
+            case DEAD -> 4;
         };
     }
 
