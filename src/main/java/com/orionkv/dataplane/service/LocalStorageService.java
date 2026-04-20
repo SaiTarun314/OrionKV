@@ -54,7 +54,6 @@ public class LocalStorageService implements StorageService {
     @Override
     public StoredValue get(String key) {
         return getVersioned(key)
-                .filter(value -> !value.tombstone())
                 .orElseThrow(() -> new KeyNotFoundException(key));
     }
 

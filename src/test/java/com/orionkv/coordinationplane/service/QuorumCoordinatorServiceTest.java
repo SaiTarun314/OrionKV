@@ -50,6 +50,37 @@ class QuorumCoordinatorServiceTest {
         assertThat(storageService.appliedReplicaWrites.get(0).sourceNodeId()).isEqualTo("node-a");
     }
 
+    @Test
+    void localTombstoneWinsVisibilityDecisionAtCoordinator() {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setReplicationFactor(1);
+        nodeProperties.setWriteQuorum(1);
+        nodeProperties.setReadQuorum(1);
+
+        RecordingStorageService storageService = new RecordingStorageService();
+        storageService.versionedValue = new StoredValue("user-1", null, 300L, true, 111L, "node-a");
+        StubReplicaRoutingService replicaRoutingService = new StubReplicaRoutingService(
+                new ReplicaRoute("user-1", 111L, List.of("node-a"))
+        );
+
+        QuorumCoordinatorService quorumCoordinatorService = new QuorumCoordinatorService(
+                nodeProperties,
+                replicaRoutingService,
+                new QuorumService(),
+                new MembershipService(Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)),
+                storageService,
+                new StubReplicaDataClient()
+        );
+
+        var response = quorumCoordinatorService.get("req-2", "user-1");
+
+        assertThat(response.getFound()).isFalse();
+        assertThat(response.getRequiredResponses()).isEqualTo(1);
+        assertThat(response.getResponseCount()).isEqualTo(1);
+        assertThat(response.getMessage()).isEqualTo("not found");
+    }
+
     private static final class StubReplicaRoutingService extends ReplicaRoutingService {
 
         private final ReplicaRoute route;
@@ -68,6 +99,7 @@ class QuorumCoordinatorServiceTest {
     private static final class RecordingStorageService implements StorageService {
 
         private final List<ReplicaRecord> appliedReplicaWrites = new ArrayList<>();
+        private StoredValue versionedValue;
 
         @Override
         public StoredValue put(String key, String value, long timestamp) {
@@ -76,12 +108,15 @@ class QuorumCoordinatorServiceTest {
 
         @Override
         public StoredValue get(String key) {
-            throw new UnsupportedOperationException();
+            if (versionedValue == null || !versionedValue.key().equals(key)) {
+                throw new com.orionkv.dataplane.exception.KeyNotFoundException(key);
+            }
+            return versionedValue;
         }
 
         @Override
         public Optional<StoredValue> getVersioned(String key) {
-            return Optional.empty();
+            return Optional.ofNullable(versionedValue).filter(value -> value.key().equals(key));
         }
 
         @Override
