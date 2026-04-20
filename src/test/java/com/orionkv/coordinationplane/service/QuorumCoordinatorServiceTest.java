@@ -81,6 +81,43 @@ class QuorumCoordinatorServiceTest {
         assertThat(response.getMessage()).isEqualTo("not found");
     }
 
+    @Test
+    void deleteUsesTombstoneWriteThroughQuorumPath() {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setReplicationFactor(3);
+        nodeProperties.setWriteQuorum(1);
+        nodeProperties.setReadQuorum(2);
+
+        RecordingStorageService storageService = new RecordingStorageService();
+        StubReplicaRoutingService replicaRoutingService = new StubReplicaRoutingService(
+                new ReplicaRoute("deleted-key", 5150L, List.of("node-a", "node-b", "node-c"))
+        );
+
+        QuorumCoordinatorService quorumCoordinatorService = new QuorumCoordinatorService(
+                nodeProperties,
+                replicaRoutingService,
+                new QuorumService(),
+                new MembershipService(Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)),
+                storageService,
+                new StubReplicaDataClient()
+        );
+
+        var response = quorumCoordinatorService.delete("req-delete-1", "deleted-key", 7000L);
+
+        assertThat(response.getSuccess()).isTrue();
+        assertThat(response.getAckCount()).isEqualTo(1);
+        assertThat(response.getRequiredAcks()).isEqualTo(1);
+        assertThat(response.getMessage()).isEqualTo("delete quorum satisfied");
+        assertThat(storageService.appliedReplicaWrites).hasSize(1);
+        ReplicaRecord localReplicaWrite = storageService.appliedReplicaWrites.get(0);
+        assertThat(localReplicaWrite.key()).isEqualTo("deleted-key");
+        assertThat(localReplicaWrite.value()).isNull();
+        assertThat(localReplicaWrite.tombstone()).isTrue();
+        assertThat(localReplicaWrite.timestamp()).isEqualTo(7000L);
+        assertThat(localReplicaWrite.token()).isEqualTo(5150L);
+    }
+
     private static final class StubReplicaRoutingService extends ReplicaRoutingService {
 
         private final ReplicaRoute route;

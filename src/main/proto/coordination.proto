@@ -41,9 +41,27 @@ message ClientGetResponse {
   string message = 10;
 }
 
+message ClientDeleteRequest {
+  string request_id = 1;
+  string key = 2;
+  int64 timestamp = 3;
+}
+
+message ClientDeleteResponse {
+  bool success = 1;
+  string key = 2;
+  int64 token = 3;
+  int64 timestamp = 4;
+  int32 ack_count = 5;
+  int32 required_acks = 6;
+  repeated string replica_node_ids = 7;
+  string message = 8;
+}
+
 service CoordinationRpc {
   rpc Put(ClientPutRequest) returns (ClientPutResponse);
   rpc Get(ClientGetRequest) returns (ClientGetResponse);
+  rpc Delete(ClientDeleteRequest) returns (ClientDeleteResponse);
 }
 
 message ReplicaPutRequest {

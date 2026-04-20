@@ -11,6 +11,7 @@ import com.orionkv.dataplane.exception.KeyNotFoundException;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.service.StorageService;
+import com.orionkv.proto.ClientDeleteResponse;
 import com.orionkv.proto.ClientGetResponse;
 import com.orionkv.proto.ClientPutResponse;
 import java.util.ArrayList;
@@ -47,6 +48,35 @@ public class QuorumCoordinatorService {
 
     public ClientPutResponse put(String requestId, String key, String value, long timestamp) {
         long writeTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        WriteQuorumResult result = writeWithQuorum(requestId, key, value, writeTimestamp, false);
+        return ClientPutResponse.newBuilder()
+                .setSuccess(result.success())
+                .setKey(key)
+                .setToken(result.token())
+                .setTimestamp(writeTimestamp)
+                .setAckCount(result.ackCount())
+                .setRequiredAcks(result.requiredAcks())
+                .addAllReplicaNodeIds(result.replicaNodeIds())
+                .setMessage(result.success() ? "write quorum satisfied" : "write quorum not met")
+                .build();
+    }
+
+    public ClientDeleteResponse delete(String requestId, String key, long timestamp) {
+        long deleteTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        WriteQuorumResult result = writeWithQuorum(requestId, key, null, deleteTimestamp, true);
+        return ClientDeleteResponse.newBuilder()
+                .setSuccess(result.success())
+                .setKey(key)
+                .setToken(result.token())
+                .setTimestamp(deleteTimestamp)
+                .setAckCount(result.ackCount())
+                .setRequiredAcks(result.requiredAcks())
+                .addAllReplicaNodeIds(result.replicaNodeIds())
+                .setMessage(result.success() ? "delete quorum satisfied" : "delete quorum not met")
+                .build();
+    }
+
+    private WriteQuorumResult writeWithQuorum(String requestId, String key, String value, long timestamp, boolean tombstone) {
         ReplicaRoute route = replicaRoutingService.routeForKey(key);
         QuorumConfig quorumConfig = quorumConfig();
 
@@ -57,8 +87,8 @@ public class QuorumCoordinatorService {
                         new ReplicaRecord(
                                 key,
                                 value,
-                                writeTimestamp,
-                                false,
+                                timestamp,
+                                tombstone,
                                 route.primaryToken(),
                                 nodeProperties.getNodeId()
                         )
@@ -75,7 +105,7 @@ public class QuorumCoordinatorService {
             boolean ack = replicaDataClient.putReplica(
                     address.get(),
                     requestId,
-                    new ReplicaRecord(key, value, writeTimestamp, false, route.primaryToken(), nodeProperties.getNodeId())
+                    new ReplicaRecord(key, value, timestamp, tombstone, route.primaryToken(), nodeProperties.getNodeId())
             );
             if (ack) {
                 ackCount++;
@@ -83,16 +113,13 @@ public class QuorumCoordinatorService {
         }
 
         boolean success = quorumService.writeQuorumSatisfied(ackCount, quorumConfig);
-        return ClientPutResponse.newBuilder()
-                .setSuccess(success)
-                .setKey(key)
-                .setToken(route.primaryToken())
-                .setTimestamp(writeTimestamp)
-                .setAckCount(ackCount)
-                .setRequiredAcks(quorumConfig.writeQuorum())
-                .addAllReplicaNodeIds(route.replicaNodeIds())
-                .setMessage(success ? "write quorum satisfied" : "write quorum not met")
-                .build();
+        return new WriteQuorumResult(
+                success,
+                route.primaryToken(),
+                ackCount,
+                quorumConfig.writeQuorum(),
+                route.replicaNodeIds()
+        );
     }
 
     public ClientGetResponse get(String requestId, String key) {
@@ -194,5 +221,14 @@ public class QuorumCoordinatorService {
                 nodeProperties.getWriteQuorum(),
                 nodeProperties.getReadQuorum()
         );
+    }
+
+    private record WriteQuorumResult(
+            boolean success,
+            long token,
+            int ackCount,
+            int requiredAcks,
+            List<String> replicaNodeIds
+    ) {
     }
 }
