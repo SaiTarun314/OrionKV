@@ -243,7 +243,7 @@ class QuorumCoordinatorServiceTest {
         private final ReplicaRoute route;
 
         private StubReplicaRoutingService(ReplicaRoute route) {
-            super(null, null);
+            super(null);
             this.route = route;
         }
 

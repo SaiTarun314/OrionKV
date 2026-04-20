@@ -4,6 +4,7 @@ import com.orionkv.common.dto.GossipResponse;
 import com.orionkv.common.rpc.ProtoMapper;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.service.MembershipService;
+import com.orionkv.controlplane.ring.service.HashRingService;
 import com.orionkv.proto.GossipPayload;
 import com.orionkv.proto.GossipRpcGrpc;
 import com.orionkv.proto.MembershipState;
@@ -14,10 +15,16 @@ import org.springframework.stereotype.Component;
 public class GossipRpcHandler extends GossipRpcGrpc.GossipRpcImplBase {
 
     private final MembershipService membershipService;
+    private final HashRingService hashRingService;
     private final NodeProperties nodeProperties;
 
-    public GossipRpcHandler(MembershipService membershipService, NodeProperties nodeProperties) {
+    public GossipRpcHandler(
+            MembershipService membershipService,
+            HashRingService hashRingService,
+            NodeProperties nodeProperties
+    ) {
         this.membershipService = membershipService;
+        this.hashRingService = hashRingService;
         this.nodeProperties = nodeProperties;
     }
 
@@ -29,6 +36,7 @@ public class GossipRpcHandler extends GossipRpcGrpc.GossipRpcImplBase {
                                 || !nodeProperties.getNodeId().equals(record.nodeId()))
                         .toList()
         );
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
         responseObserver.onNext(ProtoMapper.toProto(new GossipResponse(
                 nodeProperties.getNodeId(),
                 membershipService.getMembershipSnapshot().stream().toList(),

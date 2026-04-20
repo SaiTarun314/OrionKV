@@ -53,7 +53,7 @@ class FailureRebalanceRoutingIntegrationTest {
 
         HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
         hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
-        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService, membershipService);
+        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService);
 
         MemberRecord deadCandidate = findDeadCandidateThatAddsRanges(hashRingService, membershipService, nodeProperties);
         String keyThroughDeadCandidate = findKeyRoutedThrough(deadCandidate.nodeId(), replicaRoutingService);
@@ -72,6 +72,7 @@ class FailureRebalanceRoutingIntegrationTest {
         );
 
         membershipService.markDead(deadCandidate.nodeId());
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
         failureRebalanceService.rebalanceDeadMembers();
 
         ReplicaRoute afterFailure = replicaRoutingService.routeForKey(keyThroughDeadCandidate);
@@ -210,4 +211,3 @@ class FailureRebalanceRoutingIntegrationTest {
         }
     }
 }
-

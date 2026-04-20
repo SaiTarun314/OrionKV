@@ -83,6 +83,7 @@ public class JoinService {
         while (true) {
             membershipService.mergeRemoteMembership(currentSnapshot);
             membershipService.updateHeartbeat(nodeProperties.getNodeId(), nodeProperties.getAddress(), 0);
+            hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
 
             List<TokenRange> newRanges = transferNewRanges(previousSnapshot, currentSnapshot);
             newRanges.stream()

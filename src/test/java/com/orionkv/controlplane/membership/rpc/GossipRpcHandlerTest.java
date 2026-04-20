@@ -4,6 +4,8 @@ import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.model.MemberStatus;
 import com.orionkv.controlplane.membership.service.MembershipService;
+import com.orionkv.controlplane.ring.service.HashRingService;
+import com.orionkv.controlplane.ring.service.VirtualNodeService;
 import com.orionkv.proto.GossipPayload;
 import com.orionkv.proto.MemberRecordProto;
 import com.orionkv.proto.MemberStatusProto;
@@ -28,8 +30,10 @@ class GossipRpcHandlerTest {
         );
         NodeProperties nodeProperties = new NodeProperties();
         nodeProperties.setNodeId("node-self");
+        nodeProperties.setVirtualNodeCount(8);
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
 
-        GossipRpcHandler handler = new GossipRpcHandler(membershipService, nodeProperties);
+        GossipRpcHandler handler = new GossipRpcHandler(membershipService, hashRingService, nodeProperties);
         RecordingObserver observer = new RecordingObserver();
 
         GossipPayload request = GossipPayload.newBuilder()
@@ -62,8 +66,10 @@ class GossipRpcHandlerTest {
 
         NodeProperties nodeProperties = new NodeProperties();
         nodeProperties.setNodeId("node-self");
+        nodeProperties.setVirtualNodeCount(8);
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
 
-        GossipRpcHandler handler = new GossipRpcHandler(membershipService, nodeProperties);
+        GossipRpcHandler handler = new GossipRpcHandler(membershipService, hashRingService, nodeProperties);
         RecordingObserver observer = new RecordingObserver();
 
         GossipPayload request = GossipPayload.newBuilder()

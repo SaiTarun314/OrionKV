@@ -57,7 +57,8 @@ class QuorumFlowIntegrationTest {
         ));
 
         HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
-        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService, membershipService);
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService);
 
         WriteAheadLogRepository repository = new WriteAheadLogRepository(
                 tempDir.resolve("quorum-flow.wal.log").toString(),
@@ -79,6 +80,7 @@ class QuorumFlowIntegrationTest {
 
         String key = "quorum-live-key";
         membershipService.markDead("node-c");
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
 
         ClientPutResponse putResponse = quorumCoordinatorService.put("put-1", key, "value-1", 1_710_000_000_000L);
         assertThat(putResponse.getSuccess()).isTrue();
@@ -135,4 +137,3 @@ class QuorumFlowIntegrationTest {
         }
     }
 }
-

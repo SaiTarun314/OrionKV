@@ -34,13 +34,15 @@ class ReplicaRoutingServiceTest {
         ));
 
         HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
-        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService, membershipService);
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService);
 
         String key = findKeyRoutedThrough("node-b", replicaRoutingService);
         ReplicaRoute initialRoute = replicaRoutingService.routeForKey(key);
         assertThat(initialRoute.replicaNodeIds()).contains("node-b");
 
         membershipService.markDead("node-b");
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
 
         ReplicaRoute rerouted = replicaRoutingService.routeForKey(key);
         assertThat(rerouted.replicaNodeIds()).doesNotContain("node-b");
