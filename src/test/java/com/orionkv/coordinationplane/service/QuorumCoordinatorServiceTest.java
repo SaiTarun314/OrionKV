@@ -3,6 +3,8 @@ package com.orionkv.coordinationplane.service;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.coordinationplane.model.ReplicaRoute;
 import com.orionkv.coordinationplane.rpc.ReplicaDataClient;
+import com.orionkv.controlplane.membership.model.MemberRecord;
+import com.orionkv.controlplane.membership.model.MemberStatus;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
@@ -16,6 +18,9 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -149,6 +154,88 @@ class QuorumCoordinatorServiceTest {
         assertThat(storageService.appliedReplicaWrites).hasSize(2);
         assertThat(storageService.appliedReplicaWrites.get(0).timestamp()).isEqualTo(first.getTimestamp());
         assertThat(storageService.appliedReplicaWrites.get(1).timestamp()).isEqualTo(first.getTimestamp());
+    }
+
+    @Test
+    void getTriggersAsyncReadRepairForStaleReplicaResponses() throws Exception {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setReplicationFactor(3);
+        nodeProperties.setWriteQuorum(1);
+        nodeProperties.setReadQuorum(3);
+
+        RecordingStorageService storageService = new RecordingStorageService();
+        storageService.versionedValue = new StoredValue("repair-key", "local-stale", 100L, false, 777L, "node-a");
+        StubReplicaRoutingService replicaRoutingService = new StubReplicaRoutingService(
+                new ReplicaRoute("repair-key", 777L, List.of("node-a", "node-b", "node-c"))
+        );
+
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.mergeRemoteMembership(List.of(
+                member("node-a", "127.0.0.1:9091"),
+                member("node-b", "127.0.0.1:9092"),
+                member("node-c", "127.0.0.1:9093")
+        ));
+
+        CountDownLatch staleReplicaRepairLatch = new CountDownLatch(1);
+        List<String> repairRequests = new CopyOnWriteArrayList<>();
+        ReplicaDataClient replicaDataClient = new ReplicaDataClient() {
+            @Override
+            public boolean putReplica(String targetAddress, String requestId, ReplicaRecord record) {
+                repairRequests.add(targetAddress + "|" + requestId + "|" + record.timestamp());
+                if ("127.0.0.1:9093".equals(targetAddress) && record.timestamp() == 300L) {
+                    staleReplicaRepairLatch.countDown();
+                }
+                return true;
+            }
+
+            @Override
+            public com.orionkv.coordinationplane.model.ReplicaReadResult getReplica(
+                    String targetAddress,
+                    String requestId,
+                    String key
+            ) {
+                if ("127.0.0.1:9092".equals(targetAddress)) {
+                    return new com.orionkv.coordinationplane.model.ReplicaReadResult(
+                            true, true, key, "fresh", 777L, 300L, false, "node-b"
+                    );
+                }
+                if ("127.0.0.1:9093".equals(targetAddress)) {
+                    return new com.orionkv.coordinationplane.model.ReplicaReadResult(
+                            true, true, key, "stale-remote", 777L, 200L, false, "node-c"
+                    );
+                }
+                return new com.orionkv.coordinationplane.model.ReplicaReadResult(false, false, key, null, -1L, -1L, false, null);
+            }
+        };
+
+        QuorumCoordinatorService quorumCoordinatorService = new QuorumCoordinatorService(
+                nodeProperties,
+                replicaRoutingService,
+                new QuorumService(),
+                membershipService,
+                storageService,
+                replicaDataClient
+        );
+
+        var response = quorumCoordinatorService.get("req-read-repair", "repair-key");
+
+        assertThat(response.getFound()).isTrue();
+        assertThat(response.getValue()).isEqualTo("fresh");
+        assertThat(staleReplicaRepairLatch.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(repairRequests).anyMatch(entry -> entry.startsWith("127.0.0.1:9093|req-read-repair-read-repair|300"));
+    }
+
+    private static MemberRecord member(String nodeId, String address) {
+        return new MemberRecord(
+                nodeId,
+                address,
+                MemberStatus.ALIVE,
+                1L,
+                Instant.parse("2026-04-17T20:00:00Z")
+        );
     }
 
     private static final class StubReplicaRoutingService extends ReplicaRoutingService {

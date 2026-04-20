@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.springframework.stereotype.Service;
@@ -182,7 +183,7 @@ public class QuorumCoordinatorService {
                 .max(Comparator.comparingLong(ReplicaReadResult::timestamp)
                         .thenComparing(result -> result.nodeId() == null ? "" : result.nodeId()));
 
-        if (winner.isEmpty() || winner.get().tombstone()) {
+        if (winner.isEmpty()) {
             return ClientGetResponse.newBuilder()
                     .setFound(false)
                     .setKey(key)
@@ -193,14 +194,27 @@ public class QuorumCoordinatorService {
                     .build();
         }
 
-        ReplicaReadResult value = winner.get();
+        ReplicaReadResult latest = winner.get();
+        triggerReadRepairAsync(requestId, key, latest, readResults);
+
+        if (latest.tombstone()) {
+            return ClientGetResponse.newBuilder()
+                    .setFound(false)
+                    .setKey(key)
+                    .setResponseCount(responseCount)
+                    .setRequiredResponses(quorumConfig.readQuorum())
+                    .addAllReplicaNodeIds(route.replicaNodeIds())
+                    .setMessage("not found")
+                    .build();
+        }
+
         return ClientGetResponse.newBuilder()
                 .setFound(true)
-                .setKey(value.key())
-                .setValue(value.value() == null ? "" : value.value())
-                .setToken(value.token())
-                .setTimestamp(value.timestamp())
-                .setTombstone(value.tombstone())
+                .setKey(latest.key())
+                .setValue(latest.value() == null ? "" : latest.value())
+                .setToken(latest.token())
+                .setTimestamp(latest.timestamp())
+                .setTombstone(latest.tombstone())
                 .setResponseCount(responseCount)
                 .setRequiredResponses(quorumConfig.readQuorum())
                 .addAllReplicaNodeIds(route.replicaNodeIds())
@@ -212,6 +226,58 @@ public class QuorumCoordinatorService {
         return membershipService.getMember(replicaNodeId)
                 .filter(member -> member.status() == MemberStatus.ALIVE)
                 .map(record -> record.address());
+    }
+
+    private void triggerReadRepairAsync(String requestId, String key, ReplicaReadResult latest, List<ReplicaReadResult> readResults) {
+        for (ReplicaReadResult replicaResult : readResults) {
+            if (replicaResult.timestamp() >= latest.timestamp()) {
+                continue;
+            }
+
+            CompletableFuture.runAsync(() -> repairReplica(requestId, key, latest, replicaResult.nodeId()))
+                    .exceptionally(ex -> null);
+        }
+    }
+
+    private void repairReplica(String requestId, String key, ReplicaReadResult latest, String replicaNodeId) {
+        if (replicaNodeId == null || replicaNodeId.isBlank()) {
+            return;
+        }
+
+        ReplicaRecord repairRecord = new ReplicaRecord(
+                key,
+                latest.value(),
+                latest.timestamp(),
+                latest.tombstone(),
+                latest.token(),
+                nodeProperties.getNodeId()
+        );
+
+        if (isLocalNode(replicaNodeId)) {
+            try {
+                storageService.applyReplicaWrite(repairRecord);
+            } catch (RuntimeException ignored) {
+                // best-effort repair
+            }
+            return;
+        }
+
+        try {
+            resolveReplicaAddress(replicaNodeId).ifPresent(address -> replicaDataClient.putReplica(
+                    address,
+                    readRepairRequestId(requestId),
+                    repairRecord
+            ));
+        } catch (RuntimeException ignored) {
+            // best-effort repair
+        }
+    }
+
+    private String readRepairRequestId(String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            return "read-repair";
+        }
+        return requestId + "-read-repair";
     }
 
     private long resolveWriteTimestamp(String requestId, long incomingTimestamp) {
