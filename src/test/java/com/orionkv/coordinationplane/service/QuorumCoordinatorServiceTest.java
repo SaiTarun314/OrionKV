@@ -118,6 +118,39 @@ class QuorumCoordinatorServiceTest {
         assertThat(localReplicaWrite.token()).isEqualTo(5150L);
     }
 
+    @Test
+    void retryWithoutTimestampReusesOriginallyAssignedTimestamp() throws Exception {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setReplicationFactor(3);
+        nodeProperties.setWriteQuorum(1);
+        nodeProperties.setReadQuorum(2);
+
+        RecordingStorageService storageService = new RecordingStorageService();
+        StubReplicaRoutingService replicaRoutingService = new StubReplicaRoutingService(
+                new ReplicaRoute("retry-key", 4242L, List.of("node-a", "node-b", "node-c"))
+        );
+
+        QuorumCoordinatorService quorumCoordinatorService = new QuorumCoordinatorService(
+                nodeProperties,
+                replicaRoutingService,
+                new QuorumService(),
+                new MembershipService(Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)),
+                storageService,
+                new StubReplicaDataClient()
+        );
+
+        var first = quorumCoordinatorService.put("retry-1", "retry-key", "value", 0L);
+        Thread.sleep(5L);
+        var second = quorumCoordinatorService.put("retry-1", "retry-key", "value", 0L);
+
+        assertThat(first.getTimestamp()).isPositive();
+        assertThat(second.getTimestamp()).isEqualTo(first.getTimestamp());
+        assertThat(storageService.appliedReplicaWrites).hasSize(2);
+        assertThat(storageService.appliedReplicaWrites.get(0).timestamp()).isEqualTo(first.getTimestamp());
+        assertThat(storageService.appliedReplicaWrites.get(1).timestamp()).isEqualTo(first.getTimestamp());
+    }
+
     private static final class StubReplicaRoutingService extends ReplicaRoutingService {
 
         private final ReplicaRoute route;

@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -29,6 +31,7 @@ public class QuorumCoordinatorService {
     private final MembershipService membershipService;
     private final StorageService storageService;
     private final ReplicaDataClient replicaDataClient;
+    private final ConcurrentMap<String, Long> requestTimestampById = new ConcurrentHashMap<>();
 
     public QuorumCoordinatorService(
             NodeProperties nodeProperties,
@@ -47,7 +50,7 @@ public class QuorumCoordinatorService {
     }
 
     public ClientPutResponse put(String requestId, String key, String value, long timestamp) {
-        long writeTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        long writeTimestamp = resolveWriteTimestamp(requestId, timestamp);
         WriteQuorumResult result = writeWithQuorum(requestId, key, value, writeTimestamp, false);
         return ClientPutResponse.newBuilder()
                 .setSuccess(result.success())
@@ -62,7 +65,7 @@ public class QuorumCoordinatorService {
     }
 
     public ClientDeleteResponse delete(String requestId, String key, long timestamp) {
-        long deleteTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        long deleteTimestamp = resolveWriteTimestamp(requestId, timestamp);
         WriteQuorumResult result = writeWithQuorum(requestId, key, null, deleteTimestamp, true);
         return ClientDeleteResponse.newBuilder()
                 .setSuccess(result.success())
@@ -209,6 +212,29 @@ public class QuorumCoordinatorService {
         return membershipService.getMember(replicaNodeId)
                 .filter(member -> member.status() == MemberStatus.ALIVE)
                 .map(record -> record.address());
+    }
+
+    private long resolveWriteTimestamp(String requestId, long incomingTimestamp) {
+        if (incomingTimestamp > 0 && !hasRequestId(requestId)) {
+            return incomingTimestamp;
+        }
+        if (incomingTimestamp <= 0 && !hasRequestId(requestId)) {
+            return System.currentTimeMillis();
+        }
+
+        return requestTimestampById.compute(requestId, (id, existingTimestamp) -> {
+            if (existingTimestamp != null) {
+                return existingTimestamp;
+            }
+            if (incomingTimestamp > 0) {
+                return incomingTimestamp;
+            }
+            return System.currentTimeMillis();
+        });
+    }
+
+    private boolean hasRequestId(String requestId) {
+        return requestId != null && !requestId.isBlank();
     }
 
     private boolean isLocalNode(String nodeId) {
