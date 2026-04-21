@@ -22,6 +22,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 class FailureRebalanceServiceTest {
 
@@ -69,6 +70,81 @@ class FailureRebalanceServiceTest {
         assertThat(storageService.appliedRecords).isNotEmpty();
     }
 
+    @Test
+    void rebalancesWhenNodeGainsReplicaRangeWithoutPrimaryOwnershipChange() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)
+        );
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setVirtualNodeCount(16);
+        nodeProperties.setReplicationFactor(3);
+
+        List<MemberRecord> members = List.of(
+                member("node-a", MemberStatus.ALIVE, "127.0.0.1:9091"),
+                member("node-b", MemberStatus.ALIVE, "127.0.0.1:9092"),
+                member("node-c", MemberStatus.ALIVE, "127.0.0.1:9093"),
+                member("node-d", MemberStatus.ALIVE, "127.0.0.1:9094"),
+                member("node-e", MemberStatus.ALIVE, "127.0.0.1:9095")
+        );
+        membershipService.mergeRemoteMembership(members);
+
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        MemberRecord deadCandidate =
+                findDeadCandidateThatAddsReplicaRangesWithoutPrimaryMovement(hashRingService, membershipService, nodeProperties);
+
+        RecordingBootstrapReplicaClient bootstrapReplicaClient = new RecordingBootstrapReplicaClient();
+        RecordingStorageService storageService = new RecordingStorageService();
+        BootstrapTransferService bootstrapTransferService = new BootstrapTransferService(bootstrapReplicaClient, storageService);
+        FailureRebalanceService failureRebalanceService = new FailureRebalanceService(
+                membershipService,
+                hashRingService,
+                new RebalanceService(),
+                bootstrapTransferService,
+                nodeProperties
+        );
+
+        membershipService.markDead(deadCandidate.nodeId());
+        failureRebalanceService.rebalanceDeadMembers();
+
+        assertThat(bootstrapReplicaClient.requests).isNotEmpty();
+        assertThat(storageService.appliedRecords).isNotEmpty();
+    }
+
+    @Test
+    void doesNotCrashWhenNoDonorAddressCanBeResolved() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)
+        );
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setVirtualNodeCount(8);
+        nodeProperties.setReplicationFactor(3);
+
+        List<MemberRecord> members = List.of(
+                member("node-a", MemberStatus.ALIVE, "127.0.0.1:9091"),
+                member("node-b", MemberStatus.DEAD, "127.0.0.1:9092")
+        );
+        membershipService.mergeRemoteMembership(members);
+
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
+        RecordingBootstrapReplicaClient bootstrapReplicaClient = new RecordingBootstrapReplicaClient();
+        RecordingStorageService storageService = new RecordingStorageService();
+        BootstrapTransferService bootstrapTransferService = new BootstrapTransferService(bootstrapReplicaClient, storageService);
+        FailureRebalanceService failureRebalanceService = new FailureRebalanceService(
+                membershipService,
+                hashRingService,
+                new RebalanceService(),
+                bootstrapTransferService,
+                nodeProperties
+        );
+
+        assertThatCode(failureRebalanceService::rebalanceDeadMembers).doesNotThrowAnyException();
+        assertThat(bootstrapReplicaClient.requests).isEmpty();
+        assertThat(storageService.appliedRecords).isEmpty();
+    }
+
     private MemberRecord findDeadCandidateThatAddsRanges(
             HashRingService hashRingService,
             MembershipService membershipService,
@@ -109,6 +185,59 @@ class FailureRebalanceServiceTest {
         }
 
         throw new AssertionError("Expected at least one dead node to produce new replica ranges");
+    }
+
+    private MemberRecord findDeadCandidateThatAddsReplicaRangesWithoutPrimaryMovement(
+            HashRingService hashRingService,
+            MembershipService membershipService,
+            NodeProperties nodeProperties
+    ) {
+        RebalanceService rebalanceService = new RebalanceService();
+        List<MemberRecord> snapshot = membershipService.getMembershipSnapshot().stream().toList();
+
+        for (MemberRecord candidate : snapshot) {
+            if (candidate.nodeId().equals(nodeProperties.getNodeId())) {
+                continue;
+            }
+
+            List<MemberRecord> previousMembership = snapshot;
+            List<MemberRecord> currentMembership = snapshot.stream()
+                    .map(member -> member.nodeId().equals(candidate.nodeId())
+                            ? new MemberRecord(
+                                    member.nodeId(),
+                                    member.address(),
+                                    MemberStatus.DEAD,
+                                    member.incarnation(),
+                                    member.lastSeen()
+                            )
+                            : member)
+                    .toList();
+
+            hashRingService.rebuildRing(previousMembership);
+            List<TokenRange> previousPrimaryRanges = hashRingService.getAllPrimaryRanges();
+            List<TokenRange> previousReplicaRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+
+            hashRingService.rebuildRing(currentMembership);
+            List<TokenRange> currentPrimaryRanges = hashRingService.getAllPrimaryRanges();
+            List<TokenRange> currentReplicaRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
+
+            boolean hasNoPrimaryMovement = rebalanceService.movementsForTargetNode(
+                    rebalanceService.computePrimaryOwnershipDiff(previousPrimaryRanges, currentPrimaryRanges),
+                    nodeProperties.getNodeId()
+            ).isEmpty();
+            boolean hasReplicaMovement = !rebalanceService.detectNewRangesForNode(
+                    previousReplicaRanges,
+                    currentReplicaRanges,
+                    nodeProperties.getNodeId()
+            ).isEmpty();
+
+            if (hasNoPrimaryMovement && hasReplicaMovement) {
+                hashRingService.rebuildRing(snapshot);
+                return candidate;
+            }
+        }
+
+        throw new AssertionError("Expected at least one dead node to add replica ranges without primary ownership change");
     }
 
     private MemberRecord member(String nodeId, MemberStatus status, String address) {

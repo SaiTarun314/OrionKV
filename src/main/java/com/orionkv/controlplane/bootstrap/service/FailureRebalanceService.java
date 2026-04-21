@@ -1,12 +1,12 @@
 package com.orionkv.controlplane.bootstrap.service;
 
 import com.orionkv.config.NodeProperties;
-import com.orionkv.controlplane.bootstrap.model.PrimaryOwnershipMovement;
 import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.model.MemberStatus;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.ring.model.TokenRange;
 import com.orionkv.controlplane.ring.service.HashRingService;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,37 +75,31 @@ public class FailureRebalanceService {
                 .toList();
 
         hashRingService.rebuildRing(previousMembership);
-        List<TokenRange> previousPrimaryRanges = hashRingService.getAllPrimaryRanges();
+        List<TokenRange> previousReplicaRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
 
         hashRingService.rebuildRing(currentMembership);
-        List<TokenRange> currentPrimaryRanges = hashRingService.getAllPrimaryRanges();
+        List<TokenRange> currentReplicaRanges = hashRingService.getReplicaTokenRanges(nodeProperties.getNodeId());
 
-        List<PrimaryOwnershipMovement> movementPlans = rebalanceService.computePrimaryOwnershipDiff(
-                previousPrimaryRanges,
-                currentPrimaryRanges
-        );
-        List<PrimaryOwnershipMovement> incomingPlans = rebalanceService.movementsForTargetNode(
-                movementPlans,
+        List<TokenRange> newRanges = rebalanceService.detectNewRangesForNode(
+                previousReplicaRanges,
+                currentReplicaRanges,
                 nodeProperties.getNodeId()
         );
-        List<TokenRange> newRanges = incomingPlans.stream()
-                .map(plan -> new TokenRange(plan.startToken(), plan.endToken(), nodeProperties.getNodeId()))
-                .toList();
 
         if (newRanges.isEmpty()) {
             return;
         }
 
         Map<TokenRange, String> donorAddresses =
-                donorAddressesForMovements(previousMembership, currentMembership, incomingPlans, deadMember);
+                donorAddressesForRanges(previousMembership, currentMembership, newRanges, deadMember);
         hashRingService.rebuildRing(currentMembership);
         bootstrapTransferService.transferNewRanges(newRanges, donorAddresses, nodeProperties.getNodeId());
     }
 
-    private Map<TokenRange, String> donorAddressesForMovements(
+    private Map<TokenRange, String> donorAddressesForRanges(
             List<MemberRecord> previousMembership,
             List<MemberRecord> currentMembership,
-            List<PrimaryOwnershipMovement> incomingPlans,
+            List<TokenRange> newRanges,
             MemberRecord deadMember
     ) {
         Map<String, MemberRecord> previousMembersByNodeId = previousMembership.stream()
@@ -114,26 +108,18 @@ public class FailureRebalanceService {
                 .collect(java.util.stream.Collectors.toMap(MemberRecord::nodeId, member -> member, (left, right) -> left));
 
         hashRingService.rebuildRing(previousMembership);
-        Map<TokenRange, String> donorAddresses = incomingPlans.stream()
-                .collect(java.util.stream.Collectors.toMap(
-                        plan -> new TokenRange(plan.startToken(), plan.endToken(), nodeProperties.getNodeId()),
-                        plan -> {
-                            String preferredSourceAddress =
-                                    resolveAddress(plan.sourceNodeId(), previousMembersByNodeId, currentMembersByNodeId, deadMember);
-                            if (preferredSourceAddress != null) {
-                                return preferredSourceAddress;
-                            }
-
-                            return hashRingService.findReplicasForToken(plan.endToken()).replicaNodeIds().stream()
-                                .filter(candidateNodeId -> !candidateNodeId.equals(deadMember.nodeId()))
-                                .filter(candidateNodeId -> !candidateNodeId.equals(nodeProperties.getNodeId()))
-                                .map(candidateNodeId ->
-                                        resolveAddress(candidateNodeId, previousMembersByNodeId, currentMembersByNodeId, deadMember))
-                                .filter(address -> address != null && !address.isBlank())
-                                .findFirst()
-                                .orElse(null);
-                        }
-                ));
+        Map<TokenRange, String> donorAddresses = new LinkedHashMap<>();
+        for (TokenRange range : newRanges) {
+            String donorAddress = hashRingService.findReplicasForToken(range.endInclusive()).replicaNodeIds().stream()
+                    .filter(candidateNodeId -> !candidateNodeId.equals(deadMember.nodeId()))
+                    .filter(candidateNodeId -> !candidateNodeId.equals(nodeProperties.getNodeId()))
+                    .map(candidateNodeId ->
+                            resolveAddress(candidateNodeId, previousMembersByNodeId, currentMembersByNodeId, deadMember))
+                    .filter(address -> address != null && !address.isBlank())
+                    .findFirst()
+                    .orElse(null);
+            donorAddresses.put(range, donorAddress);
+        }
         hashRingService.rebuildRing(currentMembership);
         return donorAddresses;
     }

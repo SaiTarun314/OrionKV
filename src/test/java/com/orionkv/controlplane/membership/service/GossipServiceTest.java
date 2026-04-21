@@ -50,6 +50,79 @@ class GossipServiceTest {
         assertThat(client.request.membership()).hasSize(2);
     }
 
+    @Test
+    void shouldPreferAlivePeerOverDeadPeer() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.mergeRemoteMembership(new MemberRecord(
+                "node-alive",
+                "http://127.0.0.1:8081",
+                MemberStatus.ALIVE,
+                1,
+                Instant.parse("2026-03-29T19:59:30Z")
+        ));
+        membershipService.mergeRemoteMembership(new MemberRecord(
+                "node-dead",
+                "http://127.0.0.1:8082",
+                MemberStatus.DEAD,
+                1,
+                Instant.parse("2026-03-29T19:59:00Z")
+        ));
+        membershipService.mergeRemoteMembership(new MemberRecord(
+                "node-self",
+                "http://127.0.0.1:8080",
+                MemberStatus.ALIVE,
+                1,
+                Instant.parse("2026-03-29T20:00:00Z")
+        ));
+
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-self");
+        nodeProperties.setAddress("127.0.0.1:8080");
+
+        RecordingClient client = new RecordingClient();
+
+        GossipService gossipService = new GossipService(membershipService, nodeProperties, client);
+        gossipService.gossipMembership();
+
+        assertThat(client.peerAddress).isEqualTo("http://127.0.0.1:8081");
+        assertThat(client.request).isNotNull();
+    }
+
+    @Test
+    void shouldFallbackToDeadPeerWhenNoAlivePeerExists() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.mergeRemoteMembership(new MemberRecord(
+                "node-dead",
+                "http://127.0.0.1:8082",
+                MemberStatus.DEAD,
+                1,
+                Instant.parse("2026-03-29T19:59:00Z")
+        ));
+        membershipService.mergeRemoteMembership(new MemberRecord(
+                "node-self",
+                "http://127.0.0.1:8080",
+                MemberStatus.ALIVE,
+                1,
+                Instant.parse("2026-03-29T20:00:00Z")
+        ));
+
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-self");
+        nodeProperties.setAddress("127.0.0.1:8080");
+
+        RecordingClient client = new RecordingClient();
+
+        GossipService gossipService = new GossipService(membershipService, nodeProperties, client);
+        gossipService.gossipMembership();
+
+        assertThat(client.peerAddress).isEqualTo("http://127.0.0.1:8082");
+        assertThat(client.request).isNotNull();
+    }
+
     private static final class RecordingClient implements ControlPlaneClient {
 
         private String peerAddress;

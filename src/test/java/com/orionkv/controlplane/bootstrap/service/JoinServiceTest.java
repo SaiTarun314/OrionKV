@@ -152,6 +152,46 @@ class JoinServiceTest {
         assertThat(joinService.getBootstrapState()).isEqualTo(BootstrapState.JOINED);
     }
 
+    @Test
+    void shouldTransferAllReplicaRangesWhenJoinAddsMoreThanPrimaryOwnership() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
+        );
+        ReplicaJoinExpansionScenario scenario = ReplicaJoinExpansionScenario.find();
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-self");
+        nodeProperties.setAddress("127.0.0.1:8080");
+        nodeProperties.setVirtualNodeCount(scenario.virtualNodeCount());
+        nodeProperties.setReplicationFactor(3);
+
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
+        RebalanceService rebalanceService = new RebalanceService();
+        ReplicaOnlyJoinClient client = new ReplicaOnlyJoinClient(scenario.membership());
+        StubStorageService storageService = new StubStorageService();
+        RecordingBootstrapReplicaClient bootstrapReplicaClient = new RecordingBootstrapReplicaClient();
+        BootstrapTransferService bootstrapTransferService = new BootstrapTransferService(
+                bootstrapReplicaClient,
+                storageService
+        );
+
+        JoinService joinService = new JoinService(
+                membershipService,
+                hashRingService,
+                new VirtualNodeService(),
+                rebalanceService,
+                bootstrapTransferService,
+                storageService,
+                nodeProperties,
+                client
+        );
+
+        List<TokenRange> newRanges = joinService.joinCluster("127.0.0.1:9090");
+
+        assertThat(newRanges).hasSize(scenario.expectedReplicaRangeCount());
+        assertThat(bootstrapReplicaClient.requestedRanges).hasSize(scenario.expectedReplicaRangeCount());
+        assertThat(storageService.appliedRecords).isNotEmpty();
+    }
+
     private static final class StubClient implements ControlPlaneClient {
 
         private String seedAddress;
@@ -264,6 +304,104 @@ class JoinServiceTest {
                     )),
                     1L
             );
+        }
+    }
+
+    private record ReplicaJoinExpansionScenario(
+            List<MemberRecord> membership,
+            int virtualNodeCount,
+            int expectedReplicaRangeCount
+    ) {
+
+        private static ReplicaJoinExpansionScenario find() {
+            List<MemberRecord> membership = List.of(
+                    member("seed-node", "127.0.0.1:9090"),
+                    member("node-peer-1", "127.0.0.1:9091"),
+                    member("node-peer-2", "127.0.0.1:9092"),
+                    member("node-peer-3", "127.0.0.1:9093"),
+                    member("node-peer-4", "127.0.0.1:9094"),
+                    member("node-peer-5", "127.0.0.1:9095"),
+                    member("node-peer-6", "127.0.0.1:9096")
+            );
+
+            for (int virtualNodeCount : List.of(4, 8, 12, 16, 24, 32, 48, 64)) {
+                NodeProperties properties = new NodeProperties();
+                properties.setNodeId("node-self");
+                properties.setAddress("127.0.0.1:8080");
+                properties.setVirtualNodeCount(virtualNodeCount);
+                properties.setReplicationFactor(3);
+
+                HashRingService ringService = new HashRingService(new VirtualNodeService(), properties);
+                RebalanceService rebalanceService = new RebalanceService();
+
+                List<MemberRecord> previousMembership = membership;
+                List<MemberRecord> currentMembership = new ArrayList<>(membership);
+                currentMembership.add(new MemberRecord(
+                        "node-self",
+                        "127.0.0.1:8080",
+                        com.orionkv.controlplane.membership.model.MemberStatus.ALIVE,
+                        0L,
+                        Instant.parse("2026-03-29T20:00:00Z")
+                ));
+
+                ringService.rebuildRing(previousMembership);
+                List<TokenRange> previousPrimaryRanges = ringService.getAllPrimaryRanges();
+                List<TokenRange> previousReplicaRanges = ringService.getReplicaTokenRanges("node-self");
+
+                ringService.rebuildRing(currentMembership);
+                List<TokenRange> currentPrimaryRanges = ringService.getAllPrimaryRanges();
+                List<TokenRange> currentReplicaRanges = ringService.getReplicaTokenRanges("node-self");
+
+                int primaryMovementCount = rebalanceService.movementsForTargetNode(
+                        rebalanceService.computePrimaryOwnershipDiff(previousPrimaryRanges, currentPrimaryRanges),
+                        "node-self"
+                ).size();
+                int replicaMovementCount = rebalanceService.detectNewRangesForNode(
+                        previousReplicaRanges,
+                        currentReplicaRanges,
+                        "node-self"
+                ).size();
+
+                if (replicaMovementCount > primaryMovementCount && replicaMovementCount > 0) {
+                    return new ReplicaJoinExpansionScenario(membership, virtualNodeCount, replicaMovementCount);
+                }
+            }
+
+            throw new AssertionError("Expected a join scenario where replica backfill exceeds primary ownership movement");
+        }
+
+        private static MemberRecord member(String nodeId, String address) {
+            return new MemberRecord(
+                    nodeId,
+                    address,
+                    com.orionkv.controlplane.membership.model.MemberStatus.ALIVE,
+                    1L,
+                    Instant.parse("2026-03-29T19:59:00Z")
+            );
+        }
+    }
+
+    private static final class ReplicaOnlyJoinClient implements ControlPlaneClient {
+
+        private final List<MemberRecord> membership;
+
+        private ReplicaOnlyJoinClient(List<MemberRecord> membership) {
+            this.membership = membership;
+        }
+
+        @Override
+        public GossipResponse gossip(String peerAddress, GossipRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public GossipResponse join(String seedAddress, JoinRequest request) {
+            return new GossipResponse("seed-node", membership, 1L);
+        }
+
+        @Override
+        public GossipResponse getMembership(String peerAddress) {
+            return new GossipResponse("seed-node", membership, 1L);
         }
     }
 

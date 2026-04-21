@@ -1,8 +1,10 @@
 package com.orionkv.controlplane.membership.rpc;
 
+import com.orionkv.common.dto.GossipRequest;
 import com.orionkv.common.dto.GossipResponse;
 import com.orionkv.common.rpc.ProtoMapper;
 import com.orionkv.config.NodeProperties;
+import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.ring.service.HashRingService;
 import com.orionkv.proto.GossipPayload;
@@ -30,12 +32,14 @@ public class GossipRpcHandler extends GossipRpcGrpc.GossipRpcImplBase {
 
     @Override
     public void gossip(GossipPayload request, StreamObserver<MembershipState> responseObserver) {
+        GossipRequest gossipRequest = ProtoMapper.fromProto(request);
         membershipService.mergeRemoteMembership(
-                ProtoMapper.fromProto(request).membership().stream()
+                gossipRequest.membership().stream()
                         .filter(record -> nodeProperties.getNodeId() == null
                                 || !nodeProperties.getNodeId().equals(record.nodeId()))
                         .toList()
         );
+        refreshSourceHeartbeat(gossipRequest);
         hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
         responseObserver.onNext(ProtoMapper.toProto(new GossipResponse(
                 nodeProperties.getNodeId(),
@@ -43,5 +47,23 @@ public class GossipRpcHandler extends GossipRpcGrpc.GossipRpcImplBase {
                 membershipService.getTopologyVersion()
         )));
         responseObserver.onCompleted();
+    }
+
+    private void refreshSourceHeartbeat(GossipRequest request) {
+        if (request.sourceNodeId() == null || request.sourceNodeId().isBlank()) {
+            return;
+        }
+        if (nodeProperties.getNodeId() != null && nodeProperties.getNodeId().equals(request.sourceNodeId())) {
+            return;
+        }
+
+        MemberRecord sourceRecord = request.membership().stream()
+                .filter(record -> request.sourceNodeId().equals(record.nodeId()))
+                .findFirst()
+                .orElse(null);
+
+        String sourceAddress = sourceRecord != null ? sourceRecord.address() : null;
+        long sourceIncarnation = sourceRecord != null ? sourceRecord.incarnation() : 0L;
+        membershipService.updateHeartbeat(request.sourceNodeId(), sourceAddress, sourceIncarnation);
     }
 }

@@ -34,4 +34,22 @@ class RebalanceServiceTest {
         assertThat(rebalanceService.movementsForTargetNode(movementPlans, "node-c"))
                 .containsExactly(new PrimaryOwnershipMovement(10L, 20L, "node-b", "node-c"));
     }
+
+    @Test
+    void shouldDetectNewReplicaRangesForNode() {
+        RebalanceService rebalanceService = new RebalanceService();
+
+        List<TokenRange> previousRanges = List.of(
+                new TokenRange(0L, 10L, "node-a"),
+                new TokenRange(10L, 20L, "node-a")
+        );
+        List<TokenRange> currentRanges = List.of(
+                new TokenRange(0L, 10L, "node-a"),
+                new TokenRange(10L, 20L, "node-a"),
+                new TokenRange(20L, 30L, "node-a")
+        );
+
+        assertThat(rebalanceService.detectNewRangesForNode(previousRanges, currentRanges, "node-a"))
+                .containsExactly(new TokenRange(20L, 30L, "node-a"));
+    }
 }

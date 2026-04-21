@@ -90,6 +90,40 @@ class GossipRpcHandlerTest {
                 .isEqualTo(MemberStatus.ALIVE);
     }
 
+    @Test
+    void shouldMarkSourceAliveWhenDirectGossipIsReceived() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.updateHeartbeat("node-a", "127.0.0.1:8081", 4);
+        membershipService.markDead("node-a");
+
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-self");
+        nodeProperties.setVirtualNodeCount(8);
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
+
+        GossipRpcHandler handler = new GossipRpcHandler(membershipService, hashRingService, nodeProperties);
+        RecordingObserver observer = new RecordingObserver();
+
+        GossipPayload request = GossipPayload.newBuilder()
+                .setSourceNodeId("node-a")
+                .addMembership(MemberRecordProto.newBuilder()
+                        .setNodeId("node-a")
+                        .setAddress("127.0.0.1:8081")
+                        .setStatus(MemberStatusProto.ALIVE)
+                        .setIncarnation(4)
+                        .setLastSeen("2026-03-29T19:59:00Z")
+                        .build())
+                .build();
+
+        handler.gossip(request, observer);
+
+        assertThat(membershipService.getMember("node-a")).get()
+                .extracting(MemberRecord::status, MemberRecord::incarnation)
+                .containsExactly(MemberStatus.ALIVE, 5L);
+    }
+
     private static final class RecordingObserver implements StreamObserver<MembershipState> {
         private final List<MembershipState> values = new ArrayList<>();
 
