@@ -34,7 +34,7 @@ class PutGetDeleteIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void putGetDeleteFlowUsesTombstonesAndReturns404AfterDelete() throws Exception {
+    void putGetDeleteFlowReturnsVersionedTombstoneAfterDelete() throws Exception {
         mockMvc.perform(put("/api/kv/test-key")
                         .contentType(APPLICATION_JSON)
                         .content("""
@@ -46,13 +46,14 @@ class PutGetDeleteIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.key").value("test-key"))
                 .andExpect(jsonPath("$.value").value("value-1"))
-                .andExpect(jsonPath("$.tombstone").value(false));
+                .andExpect(jsonPath("$.is_deleted").value(false));
 
         mockMvc.perform(get("/api/kv/test-key"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.key").value("test-key"))
                 .andExpect(jsonPath("$.value").value("value-1"))
-                .andExpect(jsonPath("$.timestamp").value(1000));
+                .andExpect(jsonPath("$.timestamp").value(1000))
+                .andExpect(jsonPath("$.is_deleted").value(false));
 
         mockMvc.perform(delete("/api/kv/test-key").queryParam("timestamp", "2000"))
                 .andExpect(status().isOk())
@@ -60,6 +61,10 @@ class PutGetDeleteIntegrationTest {
                 .andExpect(jsonPath("$.status").value("deleted"));
 
         mockMvc.perform(get("/api/kv/test-key"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.key").value("test-key"))
+                .andExpect(jsonPath("$.value").doesNotExist())
+                .andExpect(jsonPath("$.timestamp").value(2000))
+                .andExpect(jsonPath("$.is_deleted").value(true));
     }
 }

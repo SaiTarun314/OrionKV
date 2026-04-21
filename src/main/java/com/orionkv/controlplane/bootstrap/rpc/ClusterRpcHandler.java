@@ -46,7 +46,8 @@ public class ClusterRpcHandler extends ClusterRpcGrpc.ClusterRpcImplBase {
     private void respond(StreamObserver<MembershipState> responseObserver) {
         responseObserver.onNext(ProtoMapper.toProto(new GossipResponse(
                 nodeProperties.getNodeId(),
-                membershipService.getMembershipSnapshot().stream().toList()
+                membershipService.getMembershipSnapshot().stream().toList(),
+                membershipService.getTopologyVersion()
         )));
         responseObserver.onCompleted();
     }

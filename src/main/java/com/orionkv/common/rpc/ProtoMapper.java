@@ -35,7 +35,8 @@ public final class ProtoMapper {
 
     public static MembershipState toProto(GossipResponse response) {
         MembershipState.Builder builder = MembershipState.newBuilder()
-                .setResponderNodeId(response.responderNodeId() == null ? "" : response.responderNodeId());
+                .setResponderNodeId(response.responderNodeId() == null ? "" : response.responderNodeId())
+                .setTopologyVersion(response.topologyVersion());
         response.membership().forEach(record -> builder.addMembership(toProto(record)));
         return builder.build();
     }
@@ -59,7 +60,11 @@ public final class ProtoMapper {
     }
 
     public static GossipResponse fromProto(MembershipState state) {
-        return new GossipResponse(state.getResponderNodeId(), fromProtoRecords(state.getMembershipList()));
+        return new GossipResponse(
+                state.getResponderNodeId(),
+                fromProtoRecords(state.getMembershipList()),
+                state.getTopologyVersion()
+        );
     }
 
     public static List<MemberRecord> fromProtoRecords(List<MemberRecordProto> records) {
@@ -79,6 +84,7 @@ public final class ProtoMapper {
     private static MemberStatusProto toProto(MemberStatus status) {
         return switch (status) {
             case ALIVE -> MemberStatusProto.ALIVE;
+            case LEAVING -> MemberStatusProto.LEAVING;
             case SUSPECT -> MemberStatusProto.SUSPECT;
             case DEAD -> MemberStatusProto.DEAD;
         };
@@ -86,6 +92,7 @@ public final class ProtoMapper {
 
     private static MemberStatus fromProto(MemberStatusProto status) {
         return switch (status) {
+            case LEAVING -> MemberStatus.LEAVING;
             case SUSPECT -> MemberStatus.SUSPECT;
             case DEAD -> MemberStatus.DEAD;
             case MEMBER_STATUS_UNSPECIFIED, ALIVE, UNRECOGNIZED -> MemberStatus.ALIVE;

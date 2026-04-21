@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Optional;
 import java.util.TreeMap;
 
 @Service
@@ -43,11 +44,15 @@ public class HashRingService {
     }
 
     public synchronized ReplicaSet findReplicas(String key) {
+        long keyToken = HashUtil.hash(key);
+        return findReplicasForToken(keyToken);
+    }
+
+    public synchronized ReplicaSet findReplicasForToken(long keyToken) {
         if (ring.isEmpty()) {
             return new ReplicaSet(-1L, List.of());
         }
 
-        long keyToken = HashUtil.hash(key);
         long primaryToken = ring.ceilingKey(keyToken) != null ? ring.ceilingKey(keyToken) : ring.firstKey();
         LinkedHashSet<String> replicas = new LinkedHashSet<>();
 
@@ -82,6 +87,55 @@ public class HashRingService {
         }
 
         return ranges;
+    }
+
+    public synchronized List<TokenRange> getReplicaTokenRanges(String nodeId) {
+        if (ring.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map.Entry<Long, String>> entries = new ArrayList<>(ring.entrySet());
+        List<TokenRange> ranges = new ArrayList<>();
+
+        for (int i = 0; i < entries.size(); i++) {
+            Map.Entry<Long, String> current = entries.get(i);
+            Map.Entry<Long, String> previous = i == 0 ? entries.get(entries.size() - 1) : entries.get(i - 1);
+            if (findReplicasForToken(current.getKey()).replicaNodeIds().contains(nodeId)) {
+                ranges.add(new TokenRange(previous.getKey(), current.getKey(), nodeId));
+            }
+        }
+
+        return ranges;
+    }
+
+    public synchronized List<TokenRange> getAllPrimaryRanges() {
+        if (ring.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map.Entry<Long, String>> entries = new ArrayList<>(ring.entrySet());
+        List<TokenRange> ranges = new ArrayList<>();
+
+        for (int i = 0; i < entries.size(); i++) {
+            Map.Entry<Long, String> current = entries.get(i);
+            Map.Entry<Long, String> previous = i == 0 ? entries.get(entries.size() - 1) : entries.get(i - 1);
+            ranges.add(new TokenRange(previous.getKey(), current.getKey(), current.getValue()));
+        }
+
+        return ranges;
+    }
+
+    public synchronized Optional<String> findOwnerForToken(long token) {
+        if (ring.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Long ownerToken = ring.ceilingKey(token);
+        if (ownerToken == null) {
+            ownerToken = ring.firstKey();
+        }
+
+        return Optional.ofNullable(ring.get(ownerToken));
     }
 
     private void collectReplicas(NavigableMap<Long, String> tokenMap, LinkedHashSet<String> replicas) {

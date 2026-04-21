@@ -4,6 +4,7 @@ import com.orionkv.common.dto.GossipRequest;
 import com.orionkv.common.rpc.ControlPlaneClient;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.model.MemberRecord;
+import com.orionkv.controlplane.membership.model.MemberStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -37,14 +38,20 @@ public class GossipService {
     )
     public void gossipMembership() {
         List<MemberRecord> peers = membershipService.getMembershipSnapshot().stream()
-                .filter(this::isEligiblePeer)
+                .filter(this::hasReachableAddress)
+                .filter(this::isNotSelf)
                 .toList();
 
         if (peers.isEmpty()) {
             return;
         }
 
-        MemberRecord peer = peers.get(ThreadLocalRandom.current().nextInt(peers.size()));
+        List<MemberRecord> preferredPeers = peers.stream()
+                .filter(memberRecord -> memberRecord.status() == MemberStatus.ALIVE)
+                .toList();
+        List<MemberRecord> candidates = preferredPeers.isEmpty() ? peers : preferredPeers;
+
+        MemberRecord peer = candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
         GossipRequest request = new GossipRequest(
                 nodeProperties.getNodeId(),
                 List.copyOf(membershipService.getMembershipSnapshot())
@@ -57,10 +64,11 @@ public class GossipService {
         }
     }
 
-    private boolean isEligiblePeer(MemberRecord memberRecord) {
-        if (memberRecord.address() == null || memberRecord.address().isBlank()) {
-            return false;
-        }
+    private boolean hasReachableAddress(MemberRecord memberRecord) {
+        return memberRecord.address() != null && !memberRecord.address().isBlank();
+    }
+
+    private boolean isNotSelf(MemberRecord memberRecord) {
         return nodeProperties.getNodeId() == null || !nodeProperties.getNodeId().equals(memberRecord.nodeId());
     }
 }

@@ -26,3 +26,5 @@ replay_pid*
 target/
 .vscode/
 .DS_Store
+docker-data/
+docker-compose.generated.yml

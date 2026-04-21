@@ -1,7 +1,6 @@
 package com.orionkv.dataplane;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.orionkv.dataplane.exception.KeyNotFoundException;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.service.BatchApplyResult;
@@ -18,7 +17,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReplicaStorageServiceTest {
@@ -60,7 +58,7 @@ class ReplicaStorageServiceTest {
     }
 
     @Test
-    void replicatedTombstoneHidesPriorValue() {
+    void replicatedTombstoneRemainsVisibleAsVersionedState() {
         TestHarness harness = createHarness(tempDir.resolve("tombstone.log"));
         LocalStorageService storageService = harness.storageService();
         long token = TokenUtil.tokenFor("user-3");
@@ -72,7 +70,8 @@ class ReplicaStorageServiceTest {
 
         assertTrue(result.applied());
         assertTrue(result.storedValue().tombstone());
-        assertThrows(KeyNotFoundException.class, () -> storageService.get("user-3"));
+        assertTrue(storageService.get("user-3").tombstone());
+        assertEquals(300L, storageService.get("user-3").timestamp());
     }
 
     @Test

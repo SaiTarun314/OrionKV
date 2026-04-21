@@ -1,12 +1,14 @@
 package com.orionkv.dataplane.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.orionkv.dataplane.model.StoredValue;
 
 public record KeyValueResponse(
         String key,
         String value,
         long timestamp,
-        boolean tombstone,
+        @JsonProperty("is_deleted")
+        boolean isDeleted,
         long token
 ) {
 

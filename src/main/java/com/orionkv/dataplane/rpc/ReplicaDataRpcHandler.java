@@ -1,8 +1,9 @@
 package com.orionkv.dataplane.rpc;
 
+import org.springframework.stereotype.Component;
+
 import com.orionkv.config.NodeProperties;
 import com.orionkv.dataplane.model.ReplicaRecord;
-import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.service.ReplicaApplyResult;
 import com.orionkv.dataplane.service.StorageService;
 import com.orionkv.proto.ReplicaDataRpcGrpc;
@@ -10,8 +11,11 @@ import com.orionkv.proto.ReplicaGetRequest;
 import com.orionkv.proto.ReplicaGetResponse;
 import com.orionkv.proto.ReplicaPutRequest;
 import com.orionkv.proto.ReplicaPutResponse;
+import com.orionkv.proto.ReplicaRangeRequest;
+import com.orionkv.proto.ReplicaRangeResponse;
+import com.orionkv.proto.ReplicaRecordProto;
+
 import io.grpc.stub.StreamObserver;
-import org.springframework.stereotype.Component;
 
 @Component
 public class ReplicaDataRpcHandler extends ReplicaDataRpcGrpc.ReplicaDataRpcImplBase {
@@ -65,6 +69,35 @@ public class ReplicaDataRpcHandler extends ReplicaDataRpcGrpc.ReplicaDataRpcImpl
                     .setTimestamp(-1L)
                     .setMessage("not found");
         });
+
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void streamRange(ReplicaRangeRequest request, StreamObserver<ReplicaRangeResponse> responseObserver) {
+        var page = storageService.scanRangePage(
+                request.getStartToken(),
+                request.getEndToken(),
+                request.getBatchSize(),
+                request.getCursor().isBlank() ? null : request.getCursor()
+        );
+
+        ReplicaRangeResponse.Builder builder = ReplicaRangeResponse.newBuilder()
+                .setDone(page.done());
+
+        if (page.nextCursor() != null && !page.nextCursor().isBlank()) {
+            builder.setNextCursor(page.nextCursor());
+        }
+
+        page.entries().forEach(entry -> builder.addRecords(ReplicaRecordProto.newBuilder()
+                .setKey(entry.key())
+                .setValue(entry.value() == null ? "" : entry.value())
+                .setTimestamp(entry.timestamp())
+                .setTombstone(entry.tombstone())
+                .setToken(entry.token())
+                .setSourceNodeId(entry.sourceNodeId() == null ? "" : entry.sourceNodeId())
+                .build()));
 
         responseObserver.onNext(builder.build());
         responseObserver.onCompleted();

@@ -16,7 +16,7 @@ FAILURE_DETECTION_INTERVAL_MS="${FAILURE_DETECTION_INTERVAL_MS:-1000}"
 SUSPECT_TIMEOUT_MS="${SUSPECT_TIMEOUT_MS:-15000}"
 DEAD_TIMEOUT_MS="${DEAD_TIMEOUT_MS:-45000}"
 
-mkdir -p logs pids
+mkdir -p logs pids data
 
 if [[ ! -f "$JAR_PATH" ]]; then
   echo "Jar not found at '$JAR_PATH'. Build first:"
@@ -52,12 +52,13 @@ for node in $NODE_IDS; do
   http_port=$((BASE_HTTP_PORT + node))
   grpc_port=$((BASE_GRPC_PORT + node))
   log_file="logs/node-${node}.log"
+  wal_path="data/node-${node}.wal.log"
 
   args=(
     "--server.port=${http_port}"
     "--node.node-id=node-${node}"
     "--node.address=127.0.0.1:${grpc_port}"
-    "--dataplane.storage.log-path=data/node-${node}/wal.log"
+    "--dataplane.storage.log-path=${wal_path}"
     "--node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}"
     "--node.self-heartbeat-interval-ms=${SELF_HEARTBEAT_INTERVAL_MS}"
     "--node.failure-detection-interval-ms=${FAILURE_DETECTION_INTERVAL_MS}"

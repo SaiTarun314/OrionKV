@@ -36,6 +36,7 @@ class RecoveryIntegrationTest {
         return new SpringApplicationBuilder(NodeApplication.class)
                 .properties(
                         "server.port=0",
+                        "spring.main.web-application-type=none",
                         "node.node-id=recovery-node",
                         "node.address=127.0.0.1:0",
                         "dataplane.storage.log-path=" + walPath

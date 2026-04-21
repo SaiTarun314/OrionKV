@@ -226,3 +226,43 @@ docker run --rm -p 8080:8080 -p 9090:9090 \
   -e APP_ARGS="--server.port=8080 --node.node-id=node-a --node.address=0.0.0.0:9090 --dataplane.storage.log-path=/app/data/wal.log" \
   orionkv:local
 ```
+
+## Ubuntu From Scratch
+
+Host bootstrap:
+
+```bash
+./scripts/setup-ubuntu-host.sh
+newgrp docker
+```
+
+End-to-end Docker cluster flow:
+
+```bash
+NODE_COUNT=25 \
+TOTAL_KEYS=50000 \
+CONCURRENCY=64 \
+VIRTUAL_NODE_COUNT=128 \
+./scripts/ubuntu-docker-e2e.sh
+```
+
+This flow will:
+- build the Docker image
+- generate a Docker Compose cluster
+- start the cluster
+- bulk-load data through quorum writes
+- run membership smoke checks
+- run replica balance/staleness audit
+
+Docker reset / restart:
+
+```bash
+# Stop cluster only
+./scripts/docker-cluster-down.sh
+
+# Stop cluster and wipe docker state
+./scripts/docker-cluster-reset.sh
+
+# Full rebuild + restart
+NODE_COUNT=25 VIRTUAL_NODE_COUNT=128 ./scripts/docker-cluster-restart.sh
+```
