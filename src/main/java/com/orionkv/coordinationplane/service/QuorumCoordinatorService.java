@@ -61,7 +61,14 @@ public class QuorumCoordinatorService {
                 .setAckCount(result.ackCount())
                 .setRequiredAcks(result.requiredAcks())
                 .addAllReplicaNodeIds(result.replicaNodeIds())
-                .setMessage(result.success() ? "write quorum satisfied" : "write quorum not met")
+                .addAllAcknowledgedNodeIds(result.acknowledgedNodeIds())
+                .setMessage(writeQuorumMessage(
+                        result.success(),
+                        result.ackCount(),
+                        result.requiredAcks(),
+                        result.replicaNodeIds().size(),
+                        quorumConfig().replicationFactor()
+                ))
                 .build();
     }
 
@@ -76,16 +83,25 @@ public class QuorumCoordinatorService {
                 .setAckCount(result.ackCount())
                 .setRequiredAcks(result.requiredAcks())
                 .addAllReplicaNodeIds(result.replicaNodeIds())
-                .setMessage(result.success() ? "delete quorum satisfied" : "delete quorum not met")
+                .addAllAcknowledgedNodeIds(result.acknowledgedNodeIds())
+                .setMessage(deleteQuorumMessage(
+                        result.success(),
+                        result.ackCount(),
+                        result.requiredAcks(),
+                        result.replicaNodeIds().size(),
+                        quorumConfig().replicationFactor()
+                ))
                 .build();
     }
 
     private WriteQuorumResult writeWithQuorum(String requestId, String key, String value, long timestamp, boolean tombstone) {
         ReplicaRoute route = replicaRoutingService.routeForKey(key);
         QuorumConfig quorumConfig = quorumConfig();
+        List<String> activeReplicaNodeIds = activeReplicaNodeIds(route);
 
         int ackCount = 0;
-        for (String replicaNodeId : route.replicaNodeIds()) {
+        List<String> acknowledgedNodeIds = new ArrayList<>();
+        for (String replicaNodeId : activeReplicaNodeIds) {
             if (isLocalNode(replicaNodeId)) {
                 storageService.applyReplicaWrite(
                         new ReplicaRecord(
@@ -98,6 +114,7 @@ public class QuorumCoordinatorService {
                         )
                 );
                 ackCount++;
+                acknowledgedNodeIds.add(replicaNodeId);
                 continue;
             }
 
@@ -113,6 +130,7 @@ public class QuorumCoordinatorService {
             );
             if (ack) {
                 ackCount++;
+                acknowledgedNodeIds.add(replicaNodeId);
             }
         }
 
@@ -122,20 +140,24 @@ public class QuorumCoordinatorService {
                 route.primaryToken(),
                 ackCount,
                 quorumConfig.writeQuorum(),
-                route.replicaNodeIds()
+                activeReplicaNodeIds,
+                acknowledgedNodeIds
         );
     }
 
     public ClientGetResponse get(String requestId, String key) {
         ReplicaRoute route = replicaRoutingService.routeForKey(key);
         QuorumConfig quorumConfig = quorumConfig();
+        List<String> activeReplicaNodeIds = activeReplicaNodeIds(route);
 
         List<ReplicaReadResult> readResults = new ArrayList<>();
         int responseCount = 0;
+        List<String> respondedNodeIds = new ArrayList<>();
 
-        for (String replicaNodeId : route.replicaNodeIds()) {
+        for (String replicaNodeId : activeReplicaNodeIds) {
             if (isLocalNode(replicaNodeId)) {
                 responseCount++;
+                respondedNodeIds.add(replicaNodeId);
                 try {
                     StoredValue value = storageService.get(key);
                     readResults.add(new ReplicaReadResult(
@@ -157,13 +179,10 @@ public class QuorumCoordinatorService {
                     ReplicaReadResult result = replicaDataClient.getReplica(address.get(), requestId, key);
                     if (result.responded()) {
                         responseCount++;
+                        respondedNodeIds.add(replicaNodeId);
                         readResults.add(result);
                     }
                 }
-            }
-
-            if (responseCount >= quorumConfig.readQuorum()) {
-                break;
             }
         }
 
@@ -173,8 +192,10 @@ public class QuorumCoordinatorService {
                     .setKey(key)
                     .setResponseCount(responseCount)
                     .setRequiredResponses(quorumConfig.readQuorum())
-                    .addAllReplicaNodeIds(route.replicaNodeIds())
-                    .setMessage("read quorum not met")
+                    .addAllReplicaNodeIds(activeReplicaNodeIds)
+                    .addAllRespondedNodeIds(respondedNodeIds)
+                    .setMessage(readQuorumMessage(false, responseCount, quorumConfig.readQuorum(),
+                            activeReplicaNodeIds.size(), route.replicaNodeIds().size()))
                     .build();
         }
 
@@ -189,8 +210,9 @@ public class QuorumCoordinatorService {
                     .setKey(key)
                     .setResponseCount(responseCount)
                     .setRequiredResponses(quorumConfig.readQuorum())
-                    .addAllReplicaNodeIds(route.replicaNodeIds())
-                    .setMessage("not found")
+                    .addAllReplicaNodeIds(activeReplicaNodeIds)
+                    .addAllRespondedNodeIds(respondedNodeIds)
+                    .setMessage(notFoundMessage(activeReplicaNodeIds.size(), route.replicaNodeIds().size()))
                     .build();
         }
 
@@ -203,8 +225,9 @@ public class QuorumCoordinatorService {
                     .setKey(key)
                     .setResponseCount(responseCount)
                     .setRequiredResponses(quorumConfig.readQuorum())
-                    .addAllReplicaNodeIds(route.replicaNodeIds())
-                    .setMessage("not found")
+                    .addAllReplicaNodeIds(activeReplicaNodeIds)
+                    .addAllRespondedNodeIds(respondedNodeIds)
+                    .setMessage(notFoundMessage(activeReplicaNodeIds.size(), route.replicaNodeIds().size()))
                     .build();
         }
 
@@ -217,15 +240,90 @@ public class QuorumCoordinatorService {
                 .setTombstone(latest.tombstone())
                 .setResponseCount(responseCount)
                 .setRequiredResponses(quorumConfig.readQuorum())
-                .addAllReplicaNodeIds(route.replicaNodeIds())
-                .setMessage("read quorum satisfied")
+                .addAllReplicaNodeIds(activeReplicaNodeIds)
+                .addAllRespondedNodeIds(respondedNodeIds)
+                .setMessage(readQuorumMessage(true, responseCount, quorumConfig.readQuorum(),
+                        activeReplicaNodeIds.size(), route.replicaNodeIds().size()))
                 .build();
+    }
+
+    private List<String> activeReplicaNodeIds(ReplicaRoute route) {
+        return route.replicaNodeIds().stream()
+                .filter(this::isEligibleReplica)
+                .toList();
+    }
+
+    private boolean isEligibleReplica(String replicaNodeId) {
+        if (isLocalNode(replicaNodeId)) {
+            return true;
+        }
+        return membershipService.getMember(replicaNodeId)
+                .map(member -> member.status() == MemberStatus.ALIVE)
+                .orElse(false);
     }
 
     private Optional<String> resolveReplicaAddress(String replicaNodeId) {
         return membershipService.getMember(replicaNodeId)
                 .filter(member -> member.status() == MemberStatus.ALIVE)
                 .map(record -> record.address());
+    }
+
+    private String writeQuorumMessage(
+            boolean success,
+            int ackCount,
+            int requiredAcks,
+            int activeReplicaCount,
+            int configuredReplicaCount
+    ) {
+        if (activeReplicaCount == configuredReplicaCount) {
+            return success ? "write quorum satisfied" : "write quorum not met";
+        }
+        return success
+                ? "write quorum satisfied with " + ackCount + "/" + activeReplicaCount
+                + " active replicas (" + configuredReplicaCount + " configured)"
+                : "write quorum not met: " + ackCount + "/" + activeReplicaCount
+                + " active replicas (" + requiredAcks + " required, " + configuredReplicaCount + " configured)";
+    }
+
+    private String deleteQuorumMessage(
+            boolean success,
+            int ackCount,
+            int requiredAcks,
+            int activeReplicaCount,
+            int configuredReplicaCount
+    ) {
+        if (activeReplicaCount == configuredReplicaCount) {
+            return success ? "delete quorum satisfied" : "delete quorum not met";
+        }
+        return success
+                ? "delete quorum satisfied with " + ackCount + "/" + activeReplicaCount
+                + " active replicas (" + configuredReplicaCount + " configured)"
+                : "delete quorum not met: " + ackCount + "/" + activeReplicaCount
+                + " active replicas (" + requiredAcks + " required, " + configuredReplicaCount + " configured)";
+    }
+
+    private String readQuorumMessage(
+            boolean success,
+            int responseCount,
+            int requiredResponses,
+            int activeReplicaCount,
+            int configuredReplicaCount
+    ) {
+        if (activeReplicaCount == configuredReplicaCount) {
+            return success ? "read quorum satisfied" : "read quorum not met";
+        }
+        return success
+                ? "read quorum satisfied with " + responseCount + "/" + activeReplicaCount
+                + " active replicas (" + configuredReplicaCount + " configured)"
+                : "read quorum not met: " + responseCount + "/" + activeReplicaCount
+                + " active replicas (" + requiredResponses + " required, " + configuredReplicaCount + " configured)";
+    }
+
+    private String notFoundMessage(int activeReplicaCount, int configuredReplicaCount) {
+        if (activeReplicaCount == configuredReplicaCount) {
+            return "not found";
+        }
+        return "not found among " + activeReplicaCount + "/" + configuredReplicaCount + " active replicas";
     }
 
     private void triggerReadRepairAsync(String requestId, String key, ReplicaReadResult latest, List<ReplicaReadResult> readResults) {
@@ -320,7 +418,8 @@ public class QuorumCoordinatorService {
             long token,
             int ackCount,
             int requiredAcks,
-            List<String> replicaNodeIds
+            List<String> replicaNodeIds,
+            List<String> acknowledgedNodeIds
     ) {
     }
 }

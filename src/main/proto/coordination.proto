@@ -21,6 +21,7 @@ message ClientPutResponse {
   int32 required_acks = 6;
   repeated string replica_node_ids = 7;
   string message = 8;
+  repeated string acknowledged_node_ids = 9;
 }
 
 message ClientGetRequest {
@@ -39,6 +40,7 @@ message ClientGetResponse {
   int32 required_responses = 8;
   repeated string replica_node_ids = 9;
   string message = 10;
+  repeated string responded_node_ids = 11;
 }
 
 message ClientDeleteRequest {
@@ -56,6 +58,7 @@ message ClientDeleteResponse {
   int32 required_acks = 6;
   repeated string replica_node_ids = 7;
   string message = 8;
+  repeated string acknowledged_node_ids = 9;
 }
 
 service CoordinationRpc {

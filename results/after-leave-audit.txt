@@ -1,0 +1,28 @@
+OrionKV Balance Audit
+  sampled_keys=500
+  keys_checked=500
+  total_members=25
+  alive_members=24
+  suspect_members=0
+  dead_members=1
+  quorum_failures=0
+  route_mismatches=0
+  stale_replica_keys=0
+  missing_replica_keys=0
+
+Replica Distribution Across Alive Nodes
+  total_replica_assignments=1500
+  avg_assignments_per_alive_node=62.50
+  stddev=12.31
+  busiest_nodes=node-6:82, node-21:80, node-4:80, node-18:76, node-3:74, node-5:74, node-1:69, node-7:69, node-14:67, node-23:65
+  least_busy_nodes=node-10:59, node-16:59, node-25:59, node-12:57, node-17:56, node-9:54, node-24:52, node-15:46, node-11:36, node-2:34
+
+Route mismatch examples
+  none
+
+Stale replica examples
+  none
+
+Missing replica examples
+  none
+
