@@ -8,6 +8,7 @@ import com.orionkv.clientrouter.model.RouterRegistrySnapshot;
 import com.orionkv.proto.MemberRecordProto;
 import com.orionkv.proto.MembershipState;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -35,6 +36,7 @@ public class NodeRegistryService {
     private Instant updatedAt;
     private final Map<String, RouterNodeRecord> nodesById = new LinkedHashMap<>();
 
+    @Autowired
     public NodeRegistryService(ObjectMapper objectMapper, ClientRouterProperties properties) {
         this(objectMapper, properties, Clock.systemUTC());
     }
