@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 TOTAL_KEYS="${TOTAL_KEYS:-50000}"
 CONCURRENCY="${CONCURRENCY:-64}"
+START_INDEX="${START_INDEX:-1}"
 KEY_PREFIX="${KEY_PREFIX:-bulk-key}"
 VALUE_PREFIX="${VALUE_PREFIX:-bulk-value}"
 TIMESTAMP_BASE="${TIMESTAMP_BASE:-1710000000000}"
@@ -19,6 +20,11 @@ fi
 
 if ! [[ "$CONCURRENCY" =~ ^[0-9]+$ ]] || (( CONCURRENCY < 1 )); then
   echo "CONCURRENCY must be a positive integer"
+  exit 1
+fi
+
+if ! [[ "$START_INDEX" =~ ^[0-9]+$ ]] || (( START_INDEX < 1 )); then
+  echo "START_INDEX must be a positive integer"
   exit 1
 fi
 
@@ -46,9 +52,11 @@ run_put() {
 
 export ROOT_DIR TOTAL_KEYS CONCURRENCY KEY_PREFIX VALUE_PREFIX TIMESTAMP_BASE PROTO_FILE
 export PORTS
+export START_INDEX
 
 echo "Starting bulk load"
 echo "  total_keys=${TOTAL_KEYS}"
+echo "  start_index=${START_INDEX}"
 echo "  concurrency=${CONCURRENCY}"
 echo "  ports=${PORTS}"
 
@@ -57,27 +65,29 @@ start_epoch="$(date +%s)"
 seq 1 "$TOTAL_KEYS" | xargs -P "$CONCURRENCY" -n 1 bash -lc '
   ROOT_DIR="$1"
   PORTS="$2"
-  KEY_PREFIX="$3"
-  VALUE_PREFIX="$4"
-  TIMESTAMP_BASE="$5"
-  PROTO_FILE="$6"
-  i="$7"
+  START_INDEX="$3"
+  KEY_PREFIX="$4"
+  VALUE_PREFIX="$5"
+  TIMESTAMP_BASE="$6"
+  PROTO_FILE="$7"
+  i="$8"
 
   cd "$ROOT_DIR"
   read -r -a PORT_ARRAY <<< "$PORTS"
   port_count="${#PORT_ARRAY[@]}"
   port_index=$(( (i - 1) % port_count ))
   port="${PORT_ARRAY[$port_index]}"
-  key="${KEY_PREFIX}-${i}"
-  value="${VALUE_PREFIX}-${i}"
-  timestamp=$(( TIMESTAMP_BASE + i ))
+  key_index=$(( START_INDEX + i - 1 ))
+  key="${KEY_PREFIX}-${key_index}"
+  value="${VALUE_PREFIX}-${key_index}"
+  timestamp=$(( TIMESTAMP_BASE + key_index ))
 
   grpcurl -plaintext \
-    -d "{\"requestId\":\"load-${i}\",\"key\":\"${key}\",\"value\":\"${value}\",\"timestamp\":${timestamp}}" \
+    -d "{\"requestId\":\"load-${key_index}\",\"key\":\"${key}\",\"value\":\"${value}\",\"timestamp\":${timestamp}}" \
     -proto "$PROTO_FILE" \
     "127.0.0.1:${port}" \
     orionkv.node.CoordinationRpc/Put >/dev/null
-' _ "$ROOT_DIR" "$PORTS" "$KEY_PREFIX" "$VALUE_PREFIX" "$TIMESTAMP_BASE" "$PROTO_FILE"
+' _ "$ROOT_DIR" "$PORTS" "$START_INDEX" "$KEY_PREFIX" "$VALUE_PREFIX" "$TIMESTAMP_BASE" "$PROTO_FILE"
 
 end_epoch="$(date +%s)"
 duration=$(( end_epoch - start_epoch ))
