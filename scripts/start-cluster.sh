@@ -15,6 +15,19 @@ SELF_HEARTBEAT_INTERVAL_MS="${SELF_HEARTBEAT_INTERVAL_MS:-500}"
 FAILURE_DETECTION_INTERVAL_MS="${FAILURE_DETECTION_INTERVAL_MS:-1000}"
 SUSPECT_TIMEOUT_MS="${SUSPECT_TIMEOUT_MS:-15000}"
 DEAD_TIMEOUT_MS="${DEAD_TIMEOUT_MS:-45000}"
+CLIENT_ROUTER_URL="${CLIENT_ROUTER_URL:-http://152.7.177.154:8090/client/nodes/seed}"
+
+normalize_client_router_base_url() {
+  local url="$1"
+  url="${url%/}"
+  if [[ "$url" == */client/nodes/seed ]]; then
+    echo "${url%/client/nodes/seed}"
+    return
+  fi
+  echo "$url"
+}
+
+CLIENT_ROUTER_BASE_URL="$(normalize_client_router_base_url "$CLIENT_ROUTER_URL")"
 
 mkdir -p logs pids data
 
@@ -58,6 +71,8 @@ for node in $NODE_IDS; do
     "--server.port=${http_port}"
     "--node.node-id=node-${node}"
     "--node.address=127.0.0.1:${grpc_port}"
+    "--node.bind-port=${grpc_port}"
+    "--node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}"
     "--dataplane.storage.log-path=${wal_path}"
     "--node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}"
     "--node.self-heartbeat-interval-ms=${SELF_HEARTBEAT_INTERVAL_MS}"
@@ -84,3 +99,4 @@ for node in $NODE_IDS; do
 done
 
 echo "Cluster startup complete."
+echo "Client router base URL: ${CLIENT_ROUTER_BASE_URL}"
