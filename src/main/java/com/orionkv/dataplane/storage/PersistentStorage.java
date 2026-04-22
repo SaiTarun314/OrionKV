@@ -9,4 +9,6 @@ public interface PersistentStorage {
     void append(WriteAheadLogEntry entry);
 
     List<WriteAheadLogEntry> loadAll();
+
+    void reset();
 }

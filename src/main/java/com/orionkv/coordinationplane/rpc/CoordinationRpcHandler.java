@@ -1,6 +1,8 @@
 package com.orionkv.coordinationplane.rpc;
 
 import com.orionkv.coordinationplane.service.QuorumCoordinatorService;
+import com.orionkv.proto.ClientDeleteRequest;
+import com.orionkv.proto.ClientDeleteResponse;
 import com.orionkv.proto.ClientGetRequest;
 import com.orionkv.proto.ClientGetResponse;
 import com.orionkv.proto.ClientPutRequest;
@@ -33,6 +35,17 @@ public class CoordinationRpcHandler extends CoordinationRpcGrpc.CoordinationRpcI
     @Override
     public void get(ClientGetRequest request, StreamObserver<ClientGetResponse> responseObserver) {
         ClientGetResponse response = quorumCoordinatorService.get(request.getRequestId(), request.getKey());
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void delete(ClientDeleteRequest request, StreamObserver<ClientDeleteResponse> responseObserver) {
+        ClientDeleteResponse response = quorumCoordinatorService.delete(
+                request.getRequestId(),
+                request.getKey(),
+                request.getTimestamp()
+        );
         responseObserver.onNext(response);
         responseObserver.onCompleted();
     }

@@ -1,7 +1,6 @@
 package com.orionkv.dataplane;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.orionkv.dataplane.exception.KeyNotFoundException;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
 import com.orionkv.dataplane.service.BatchApplyResult;
@@ -18,7 +17,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReplicaStorageServiceTest {
@@ -40,6 +38,7 @@ class ReplicaStorageServiceTest {
         assertTrue(result.applied());
         assertEquals("replica-value", storageService.get("user-1").value());
         assertEquals(200L, storageService.get("user-1").timestamp());
+        assertEquals("node-2", storageService.get("user-1").sourceNodeId());
     }
 
     @Test
@@ -59,7 +58,7 @@ class ReplicaStorageServiceTest {
     }
 
     @Test
-    void replicatedTombstoneHidesPriorValue() {
+    void replicatedTombstoneRemainsVisibleAsVersionedState() {
         TestHarness harness = createHarness(tempDir.resolve("tombstone.log"));
         LocalStorageService storageService = harness.storageService();
         long token = TokenUtil.tokenFor("user-3");
@@ -71,7 +70,8 @@ class ReplicaStorageServiceTest {
 
         assertTrue(result.applied());
         assertTrue(result.storedValue().tombstone());
-        assertThrows(KeyNotFoundException.class, () -> storageService.get("user-3"));
+        assertTrue(storageService.get("user-3").tombstone());
+        assertEquals(300L, storageService.get("user-3").timestamp());
     }
 
     @Test
@@ -183,6 +183,7 @@ class ReplicaStorageServiceTest {
         LocalStorageService recoveredService = createHarness(walPath).storageService();
         assertEquals("replicated", recoveredService.get("replica-recovery-key").value());
         assertEquals(101L, recoveredService.get("replica-recovery-key").timestamp());
+        assertEquals("node-8", recoveredService.get("replica-recovery-key").sourceNodeId());
     }
 
     @Test
@@ -198,6 +199,8 @@ class ReplicaStorageServiceTest {
         LocalStorageService recoveredService = createHarness(walPath).storageService();
         assertEquals("one", recoveredService.get("boot-a").value());
         assertEquals("two", recoveredService.get("boot-b").value());
+        assertEquals("node-9", recoveredService.get("boot-a").sourceNodeId());
+        assertEquals("node-9", recoveredService.get("boot-b").sourceNodeId());
     }
 
     private TestHarness createHarness(Path walPath) {

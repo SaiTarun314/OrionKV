@@ -5,6 +5,7 @@ public record StoredValue(
         String value,
         long timestamp,
         boolean tombstone,
-        long token
+        long token,
+        String sourceNodeId
 ) {
 }

@@ -1,5 +1,13 @@
 package com.orionkv.dataplane.service;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
 import com.orionkv.dataplane.exception.KeyNotFoundException;
 import com.orionkv.dataplane.model.ReplicaRecord;
 import com.orionkv.dataplane.model.StoredValue;
@@ -8,14 +16,8 @@ import com.orionkv.dataplane.storage.ApplyResult;
 import com.orionkv.dataplane.storage.InMemoryStorageIndex;
 import com.orionkv.dataplane.storage.PersistentStorage;
 import com.orionkv.dataplane.util.TokenUtil;
-import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
+import jakarta.annotation.PostConstruct;
 
 @Service
 public class LocalStorageService implements StorageService {
@@ -54,7 +56,6 @@ public class LocalStorageService implements StorageService {
     @Override
     public StoredValue get(String key) {
         return getVersioned(key)
-                .filter(value -> !value.tombstone())
                 .orElseThrow(() -> new KeyNotFoundException(key));
     }
 
@@ -140,6 +141,15 @@ public class LocalStorageService implements StorageService {
         return result;
     }
 
+    @Override
+    public void resetLocalState() {
+        synchronized (mutationLock) {
+            persistentStorage.reset();
+            inMemoryStorageIndex.clear();
+        }
+        log.info("Reset local storage state and cleared persisted WAL");
+    }
+
     private StoredValue applyMutation(WriteAheadLogEntry entry) {
         return persistAndApply(entry).storedValue();
     }
@@ -168,14 +178,20 @@ public class LocalStorageService implements StorageService {
 
     private WriteAheadLogEntry toWriteAheadLogEntry(ReplicaRecord replicaRecord) {
         if (replicaRecord.tombstone()) {
-            return WriteAheadLogEntry.delete(replicaRecord.key(), replicaRecord.timestamp(), replicaRecord.token());
+            return WriteAheadLogEntry.delete(
+                    replicaRecord.key(),
+                    replicaRecord.timestamp(),
+                    replicaRecord.token(),
+                    replicaRecord.sourceNodeId()
+            );
         }
 
         return WriteAheadLogEntry.put(
                 replicaRecord.key(),
                 replicaRecord.value(),
                 replicaRecord.timestamp(),
-                replicaRecord.token()
+                replicaRecord.token(),
+                replicaRecord.sourceNodeId()
         );
     }
 

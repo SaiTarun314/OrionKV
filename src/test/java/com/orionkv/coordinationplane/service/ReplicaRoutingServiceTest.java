@@ -1,59 +1,76 @@
 package com.orionkv.coordinationplane.service;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
+
 import com.orionkv.config.NodeProperties;
-import com.orionkv.controlplane.membership.model.MemberStatus;
+import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.ring.service.HashRingService;
 import com.orionkv.controlplane.ring.service.VirtualNodeService;
-import org.junit.jupiter.api.Test;
-
-import java.time.Instant;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import com.orionkv.coordinationplane.model.ReplicaRoute;
 
 class ReplicaRoutingServiceTest {
 
     @Test
-    void routeForKeyExcludesNodeAfterItIsMarkedDead() {
+    void routeForKeyExcludesDeadNodesAfterMembershipChanges() {
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-04-17T14:00:00Z"), ZoneOffset.UTC)
+        );
         NodeProperties nodeProperties = new NodeProperties();
         nodeProperties.setReplicationFactor(3);
         nodeProperties.setVirtualNodeCount(8);
 
-        MembershipService membershipService = new MembershipService();
-        membershipService.mergeRemoteMembership(new com.orionkv.controlplane.membership.model.MemberRecord(
-                "node-a", "127.0.0.1:9091", MemberStatus.ALIVE, 1, Instant.parse("2026-04-17T17:00:00Z")
-        ));
-        membershipService.mergeRemoteMembership(new com.orionkv.controlplane.membership.model.MemberRecord(
-                "node-b", "127.0.0.1:9092", MemberStatus.ALIVE, 1, Instant.parse("2026-04-17T17:00:00Z")
-        ));
-        membershipService.mergeRemoteMembership(new com.orionkv.controlplane.membership.model.MemberRecord(
-                "node-c", "127.0.0.1:9093", MemberStatus.ALIVE, 1, Instant.parse("2026-04-17T17:00:00Z")
-        ));
-        membershipService.mergeRemoteMembership(new com.orionkv.controlplane.membership.model.MemberRecord(
-                "node-d", "127.0.0.1:9094", MemberStatus.ALIVE, 1, Instant.parse("2026-04-17T17:00:00Z")
+        membershipService.mergeRemoteMembership(List.of(
+                member("node-a"),
+                member("node-b"),
+                member("node-c"),
+                member("node-d")
         ));
 
         HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
-        ReplicaRoutingService routingService = new ReplicaRoutingService(hashRingService, membershipService);
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+        ReplicaRoutingService replicaRoutingService = new ReplicaRoutingService(hashRingService);
 
-        boolean keyFound = false;
-        for (int index = 0; index < 500; index++) {
-            String key = "quorum-key-" + index;
-            var routeBeforeFailure = routingService.routeForKey(key);
-            if (!routeBeforeFailure.replicaNodeIds().contains("node-b")) {
-                continue;
+        String key = findKeyRoutedThrough("node-b", replicaRoutingService);
+        ReplicaRoute initialRoute = replicaRoutingService.routeForKey(key);
+        assertThat(initialRoute.replicaNodeIds()).contains("node-b");
+
+        membershipService.markDead("node-b");
+        hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
+
+        ReplicaRoute rerouted = replicaRoutingService.routeForKey(key);
+        assertThat(rerouted.replicaNodeIds()).doesNotContain("node-b");
+        assertThat(rerouted.replicaNodeIds()).containsOnly("node-a", "node-c", "node-d");
+    }
+
+    private String findKeyRoutedThrough(String nodeId, ReplicaRoutingService replicaRoutingService) {
+        for (int index = 0; index < 10_000; index++) {
+            String key = "route-key-" + index;
+            if (replicaRoutingService.routeForKey(key).replicaNodeIds().contains(nodeId)) {
+                return key;
             }
-
-            keyFound = true;
-            membershipService.markDead("node-b");
-
-            var routeAfterFailure = routingService.routeForKey(key);
-            assertThat(routeAfterFailure.replicaNodeIds()).doesNotContain("node-b");
-            assertThat(routeAfterFailure.replicaNodeIds()).hasSize(3);
-            assertThat(routeAfterFailure.replicaNodeIds()).containsOnly("node-a", "node-c", "node-d");
-            break;
         }
+        throw new AssertionError("Could not find key routed through " + nodeId);
+    }
 
-        assertThat(keyFound).isTrue();
+    private MemberRecord member(String nodeId) {
+        return new MemberRecord(
+                nodeId,
+                "127.0.0.1:" + switch (nodeId) {
+                    case "node-a" -> "9091";
+                    case "node-b" -> "9092";
+                    case "node-c" -> "9093";
+                    default -> "9094";
+                },
+                com.orionkv.controlplane.membership.model.MemberStatus.ALIVE,
+                1L,
+                Instant.parse("2026-04-17T14:00:00Z")
+        );
     }
 }

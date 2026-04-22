@@ -3,8 +3,10 @@ package com.orionkv.dataplane.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.orionkv.dataplane.service.ReplicaStreamPage;
 
+import java.util.List;
+
 public record ReplicaStreamRangeResponse(
-        java.util.List<ReplicaVersionResponse> entries,
+        List<ReplicaVersionResponse> entries,
         @JsonProperty("next_cursor")
         String nextCursor,
         boolean done

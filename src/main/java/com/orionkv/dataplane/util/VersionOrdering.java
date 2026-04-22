@@ -1,10 +1,10 @@
 package com.orionkv.dataplane.util;
 
-import com.orionkv.dataplane.model.StoredValue;
-import com.orionkv.dataplane.model.WriteAheadLogEntry;
-
 import java.util.Comparator;
 import java.util.Objects;
+
+import com.orionkv.dataplane.model.StoredValue;
+import com.orionkv.dataplane.model.WriteAheadLogEntry;
 
 public final class VersionOrdering {
 
@@ -34,7 +34,8 @@ public final class VersionOrdering {
                         entry.value(),
                         entry.timestamp(),
                         entry.tombstone(),
-                        entry.token()
+                        entry.token(),
+                        entry.sourceNodeId()
                 ),
                 existingValue
         );

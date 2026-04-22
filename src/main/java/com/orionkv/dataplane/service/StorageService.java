@@ -25,4 +25,6 @@ public interface StorageService {
     ReplicaApplyResult applyReplicaWrite(ReplicaRecord replicaRecord);
 
     BatchApplyResult applyReplicaBatch(List<ReplicaRecord> replicaRecords);
+
+    void resetLocalState();
 }

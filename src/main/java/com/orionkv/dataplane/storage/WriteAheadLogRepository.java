@@ -85,4 +85,21 @@ public class WriteAheadLogRepository implements PersistentStorage {
             throw new StorageInitializationException("Encountered malformed log entry during recovery", exception);
         }
     }
+
+    @Override
+    public void reset() {
+        synchronized (writeLock) {
+            try {
+                Files.writeString(
+                        logPath,
+                        "",
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.TRUNCATE_EXISTING,
+                        StandardOpenOption.WRITE
+                );
+            } catch (IOException exception) {
+                throw new StorageInitializationException("Failed to reset write-ahead log", exception);
+            }
+        }
+    }
 }

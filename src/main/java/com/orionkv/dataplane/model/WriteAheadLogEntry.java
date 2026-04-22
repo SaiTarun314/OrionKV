@@ -9,15 +9,24 @@ public record WriteAheadLogEntry(
         String value,
         long timestamp,
         boolean tombstone,
-        long token
+        long token,
+        String sourceNodeId
 ) {
 
     public static WriteAheadLogEntry put(String key, String value, long timestamp, long token) {
-        return new WriteAheadLogEntry(OperationType.PUT, key, value, timestamp, false, token);
+        return put(key, value, timestamp, token, null);
+    }
+
+    public static WriteAheadLogEntry put(String key, String value, long timestamp, long token, String sourceNodeId) {
+        return new WriteAheadLogEntry(OperationType.PUT, key, value, timestamp, false, token, sourceNodeId);
     }
 
     public static WriteAheadLogEntry delete(String key, long timestamp, long token) {
-        return new WriteAheadLogEntry(OperationType.DELETE, key, null, timestamp, true, token);
+        return delete(key, timestamp, token, null);
+    }
+
+    public static WriteAheadLogEntry delete(String key, long timestamp, long token, String sourceNodeId) {
+        return new WriteAheadLogEntry(OperationType.DELETE, key, null, timestamp, true, token, sourceNodeId);
     }
 
     public enum OperationType {

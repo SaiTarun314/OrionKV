@@ -3,6 +3,7 @@ package com.orionkv.controlplane.membership.service;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.model.MemberStatus;
+import com.orionkv.controlplane.ring.service.HashRingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -15,16 +16,27 @@ import java.time.Instant;
 public class FailureDetectorService {
 
     private final MembershipService membershipService;
+    private final HashRingService hashRingService;
     private final NodeProperties nodeProperties;
     private final Clock clock;
 
     @Autowired
-    public FailureDetectorService(MembershipService membershipService, NodeProperties nodeProperties) {
-        this(membershipService, nodeProperties, Clock.systemUTC());
+    public FailureDetectorService(
+            MembershipService membershipService,
+            HashRingService hashRingService,
+            NodeProperties nodeProperties
+    ) {
+        this(membershipService, hashRingService, nodeProperties, Clock.systemUTC());
     }
 
-    public FailureDetectorService(MembershipService membershipService, NodeProperties nodeProperties, Clock clock) {
+    public FailureDetectorService(
+            MembershipService membershipService,
+            HashRingService hashRingService,
+            NodeProperties nodeProperties,
+            Clock clock
+    ) {
         this.membershipService = membershipService;
+        this.hashRingService = hashRingService;
         this.nodeProperties = nodeProperties;
         this.clock = clock;
     }
@@ -35,6 +47,7 @@ public class FailureDetectorService {
     )
     public void scanMembership() {
         Instant now = Instant.now(clock);
+        boolean membershipChanged = false;
 
         for (MemberRecord memberRecord : membershipService.getMembershipSnapshot()) {
             if (shouldSkip(memberRecord)) {
@@ -43,13 +56,19 @@ public class FailureDetectorService {
 
             long ageMs = Duration.between(memberRecord.lastSeen(), now).toMillis();
             if (ageMs >= nodeProperties.getDeadTimeoutMs()) {
-                membershipService.markDead(memberRecord.nodeId());
+                MemberRecord updated = membershipService.markDead(memberRecord.nodeId());
+                membershipChanged = membershipChanged || updated != null;
                 continue;
             }
 
             if (ageMs >= nodeProperties.getSuspectTimeoutMs() && memberRecord.status() == MemberStatus.ALIVE) {
-                membershipService.markSuspect(memberRecord.nodeId());
+                MemberRecord updated = membershipService.markSuspect(memberRecord.nodeId());
+                membershipChanged = membershipChanged || updated != null;
             }
+        }
+
+        if (membershipChanged) {
+            hashRingService.rebuildRing(membershipService.getMembershipSnapshot());
         }
     }
 

@@ -50,6 +50,10 @@ public class InMemoryStorageIndex {
                 .toList();
     }
 
+    public void clear() {
+        primaryIndex.clear();
+    }
+
     private boolean tokenInRange(long token, long startToken, long endToken) {
         if (startToken <= endToken) {
             return token >= startToken && token <= endToken;
@@ -68,7 +72,8 @@ public class InMemoryStorageIndex {
                 entry.value(),
                 entry.timestamp(),
                 entry.tombstone(),
-                entry.token()
+                entry.token(),
+                entry.sourceNodeId()
         );
     }
 }

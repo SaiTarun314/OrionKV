@@ -3,6 +3,8 @@ package com.orionkv.controlplane.membership.service;
 import com.orionkv.config.NodeProperties;
 import com.orionkv.controlplane.membership.model.MemberRecord;
 import com.orionkv.controlplane.membership.model.MemberStatus;
+import com.orionkv.controlplane.ring.service.HashRingService;
+import com.orionkv.controlplane.ring.service.VirtualNodeService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -28,11 +30,14 @@ class FailureDetectorServiceTest {
 
         NodeProperties nodeProperties = new NodeProperties();
         nodeProperties.setNodeId("node-self");
+        nodeProperties.setVirtualNodeCount(8);
         nodeProperties.setSuspectTimeoutMs(10_000);
         nodeProperties.setDeadTimeoutMs(30_000);
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
 
         FailureDetectorService failureDetectorService = new FailureDetectorService(
                 membershipService,
+                hashRingService,
                 nodeProperties,
                 Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
         );
@@ -59,11 +64,14 @@ class FailureDetectorServiceTest {
 
         NodeProperties nodeProperties = new NodeProperties();
         nodeProperties.setNodeId("node-self");
+        nodeProperties.setVirtualNodeCount(8);
         nodeProperties.setSuspectTimeoutMs(10_000);
         nodeProperties.setDeadTimeoutMs(30_000);
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
 
         FailureDetectorService failureDetectorService = new FailureDetectorService(
                 membershipService,
+                hashRingService,
                 nodeProperties,
                 Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
         );
@@ -90,11 +98,14 @@ class FailureDetectorServiceTest {
 
         NodeProperties nodeProperties = new NodeProperties();
         nodeProperties.setNodeId("node-self");
+        nodeProperties.setVirtualNodeCount(8);
         nodeProperties.setSuspectTimeoutMs(10_000);
         nodeProperties.setDeadTimeoutMs(30_000);
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
 
         FailureDetectorService failureDetectorService = new FailureDetectorService(
                 membershipService,
+                hashRingService,
                 nodeProperties,
                 Clock.fixed(Instant.parse("2026-03-29T20:00:00Z"), ZoneOffset.UTC)
         );
