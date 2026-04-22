@@ -4,6 +4,7 @@ import com.orionkv.clientrouter.dto.JoinSeedResponse;
 import com.orionkv.clientrouter.dto.NodeRegistrationRequest;
 import com.orionkv.config.NodeProperties;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -13,6 +14,7 @@ public class ClientRouterSeedClient {
     private final RestClient restClient;
     private final NodeProperties nodeProperties;
 
+    @Autowired
     public ClientRouterSeedClient(RestClient.Builder restClientBuilder, NodeProperties nodeProperties) {
         this(restClientBuilder.build(), nodeProperties);
     }

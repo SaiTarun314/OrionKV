@@ -9,6 +9,7 @@ HTTP_PORT_BASE="${HTTP_PORT_BASE:-18080}"
 GRPC_PORT_BASE="${GRPC_PORT_BASE:-19090}"
 SERVER_PORT="${SERVER_PORT:-8080}"
 INTERNAL_GRPC_PORT="${INTERNAL_GRPC_PORT:-9090}"
+HOST_IP="${HOST_IP:-127.0.0.1}"
 IMAGE_NAME="${IMAGE_NAME:-orionkv:local}"
 OUTPUT_FILE="${OUTPUT_FILE:-docker-compose.generated.yml}"
 
@@ -50,7 +51,7 @@ for i in $(seq 1 "$NODE_COUNT"); do
   grpc_port=$((GRPC_PORT_BASE + i))
   seed_args=""
   if (( i > 1 )); then
-    seed_args=" --node.seed-address=node-1:${INTERNAL_GRPC_PORT}"
+    seed_args=" --node.seed-address=${HOST_IP}:$((GRPC_PORT_BASE + 1))"
   fi
 
   cat >> "$OUTPUT_FILE" <<EOF
@@ -66,7 +67,7 @@ for i in $(seq 1 "$NODE_COUNT"); do
       APP_ARGS: >-
         --server.port=${SERVER_PORT}
         --node.node-id=node-$i
-        --node.address=node-$i:${INTERNAL_GRPC_PORT}
+        --node.address=${HOST_IP}:${grpc_port}
         --node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}
         ${seed_args}
         --node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}
@@ -97,6 +98,7 @@ Generated ${OUTPUT_FILE}
 
 Image: ${IMAGE_NAME}
 Nodes: ${NODE_COUNT}
+Host IP: ${HOST_IP}
 Client router: ${CLIENT_ROUTER_BASE_URL}
 Host port ranges:
   HTTP: ${HTTP_PORT_BASE}+node_id

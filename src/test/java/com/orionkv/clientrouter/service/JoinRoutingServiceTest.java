@@ -69,6 +69,52 @@ class JoinRoutingServiceTest {
                 .containsExactly("node-1:10.0.0.1:9091", "node-2:10.0.0.2:9092");
     }
 
+    @Test
+    void shouldRefreshExistingNodeAddressWhenResolvingSeed() {
+        NodeRegistryService registryService = registry(tempDir.resolve("refresh-address.json"));
+        registryService.upsertManualNode("node-1", "node-1:9090");
+
+        StubClusterClient clusterClient = new StubClusterClient();
+        JoinRoutingService joinRoutingService = new JoinRoutingService(registryService, clusterClient, properties());
+
+        NodeRegistrationRequest request = new NodeRegistrationRequest();
+        request.setNodeId("node-1");
+        request.setGrpcAddress("152.7.178.169:19091");
+
+        JoinSeedResponse response = joinRoutingService.resolveSeed(request);
+
+        assertThat(response.bootstrapSelf()).isTrue();
+        assertThat(response.seedGrpcAddress()).isEqualTo("152.7.178.169:19091");
+        assertThat(registryService.snapshot().nodes())
+                .extracting(node -> node.nodeId() + ":" + node.grpcAddress())
+                .containsExactly("node-1:152.7.178.169:19091");
+    }
+
+    @Test
+    void shouldMarkFailedSeedDeadAndRefreshFromFallbackNode() {
+        NodeRegistryService registryService = registry(tempDir.resolve("fallback-refresh.json"));
+        registryService.upsertManualNode("node-1", "node-1:9090");
+        registryService.upsertManualNode("node-2", "10.0.0.2:9092");
+
+        StubClusterClient clusterClient = new StubClusterClient();
+        clusterClient.membershipState = MembershipState.newBuilder()
+                .setTopologyVersion(5)
+                .addMembership(member("node-2", "10.0.0.2:9092", MemberStatusProto.ALIVE))
+                .build();
+        clusterClient.failAddress = "node-1:9090";
+
+        JoinRoutingService joinRoutingService = new JoinRoutingService(registryService, clusterClient, properties());
+
+        var refreshed = joinRoutingService.refreshFromCluster("node-1:9090");
+
+        assertThat(registryService.snapshot().nodes())
+                .extracting(node -> node.nodeId() + ":" + node.status())
+                .containsExactly("node-2:ALIVE");
+        assertThat(refreshed.nodes())
+                .extracting(node -> node.nodeId() + ":" + node.grpcAddress())
+                .containsExactly("node-2:10.0.0.2:9092");
+    }
+
     private NodeRegistryService registry(Path path) {
         NodeRegistryService service = new NodeRegistryService(
                 new ObjectMapper().findAndRegisterModules(),
@@ -101,9 +147,13 @@ class JoinRoutingServiceTest {
 
     private static final class StubClusterClient implements OrionClusterClient {
         private MembershipState membershipState;
+        private String failAddress;
 
         @Override
         public MembershipState getMembership(String grpcAddress) {
+            if (grpcAddress != null && grpcAddress.equals(failAddress)) {
+                throw new RuntimeException("UNAVAILABLE: Unable to resolve host");
+            }
             return membershipState;
         }
 

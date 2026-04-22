@@ -27,15 +27,16 @@ public class JoinRoutingService {
     }
 
     public JoinSeedResponse resolveSeed(NodeRegistrationRequest request) {
-        if (!nodeRegistryService.hasAliveNodes()) {
-            RouterNodeRecord self = nodeRegistryService.upsertManualNode(request.getNodeId(), request.getGrpcAddress());
-            RouterRegistrySnapshot snapshot = nodeRegistryService.snapshot();
+        RouterNodeRecord self = nodeRegistryService.upsertManualNode(request.getNodeId(), request.getGrpcAddress());
+        RouterRegistrySnapshot snapshot = nodeRegistryService.snapshot();
+        if (nodeRegistryService.aliveNodes().size() == 1) {
             return new JoinSeedResponse(true, self.nodeId(), self.grpcAddress(), 1, snapshot.topologyVersion());
         }
 
-        RouterNodeRecord seed = nodeRegistryService.pickAliveNode()
-                .orElseThrow(() -> new IllegalStateException("No alive nodes available for join routing"));
-        RouterRegistrySnapshot snapshot = nodeRegistryService.snapshot();
+        RouterNodeRecord seed = nodeRegistryService.aliveNodes().stream()
+                .filter(node -> !node.nodeId().equals(request.getNodeId()))
+                .findFirst()
+                .orElse(self);
         return new JoinSeedResponse(false, seed.nodeId(), seed.grpcAddress(),
                 nodeRegistryService.aliveNodes().size(), snapshot.topologyVersion());
     }
@@ -47,8 +48,28 @@ public class JoinRoutingService {
                     .map(RouterNodeRecord::grpcAddress)
                     .orElseThrow(() -> new IllegalStateException("No seed node available to refresh membership"));
         }
-        MembershipState membership = clusterClient.getMembership(seedAddress);
-        return nodeRegistryService.replaceFromMembership(membership);
+        final String attemptedSeedAddress = seedAddress;
+        try {
+            MembershipState membership = clusterClient.getMembership(attemptedSeedAddress);
+            return nodeRegistryService.replaceFromMembership(membership);
+        } catch (RuntimeException ex) {
+            for (RouterNodeRecord node : nodeRegistryService.aliveNodes()) {
+                if (attemptedSeedAddress.equals(node.grpcAddress())) {
+                    nodeRegistryService.markNodeStatus(node.nodeId(), com.orionkv.clientrouter.model.NodeStatus.DEAD);
+                    break;
+                }
+            }
+
+            String fallbackSeed = nodeRegistryService.pickAliveNode()
+                    .map(RouterNodeRecord::grpcAddress)
+                    .filter(address -> !address.equals(attemptedSeedAddress))
+                    .orElse(null);
+            if (fallbackSeed != null && !fallbackSeed.isBlank()) {
+                MembershipState membership = clusterClient.getMembership(fallbackSeed);
+                return nodeRegistryService.replaceFromMembership(membership);
+            }
+            throw ex;
+        }
     }
 
     public JoinConfirmationResponse confirmJoin(String joiningNodeId, String seedGrpcAddress, Integer attempts, Long delayMs) {

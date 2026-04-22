@@ -86,6 +86,24 @@ public class NodeRegistryService {
         return node;
     }
 
+    public synchronized Optional<RouterNodeRecord> markNodeStatus(String nodeId, NodeStatus status) {
+        RouterNodeRecord existing = nodesById.get(nodeId);
+        if (existing == null) {
+            return Optional.empty();
+        }
+
+        RouterNodeRecord updated = new RouterNodeRecord(
+                existing.nodeId(),
+                existing.grpcAddress(),
+                status,
+                Instant.now(clock)
+        );
+        nodesById.put(nodeId, updated);
+        updatedAt = Instant.now(clock);
+        persist();
+        return Optional.of(updated);
+    }
+
     public synchronized RouterRegistrySnapshot replaceFromMembership(MembershipState membershipState) {
         Map<String, RouterNodeRecord> refreshed = new LinkedHashMap<>();
         Instant now = Instant.now(clock);
