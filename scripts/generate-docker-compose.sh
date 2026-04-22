@@ -68,6 +68,7 @@ for i in $(seq 1 "$NODE_COUNT"); do
         --server.port=${SERVER_PORT}
         --node.node-id=node-$i
         --node.address=${HOST_IP}:${grpc_port}
+        --node.bind-port=${INTERNAL_GRPC_PORT}
         --node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}
         ${seed_args}
         --node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}

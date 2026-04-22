@@ -9,6 +9,7 @@ public class NodeProperties {
     private String address;
     private String seedAddress;
     private String clientRouterBaseUrl;
+    private Integer bindPort;
     private long gossipIntervalMs = 5000;
     private long selfHeartbeatIntervalMs = 1000;
     private long failureDetectionIntervalMs = 2000;
@@ -49,6 +50,14 @@ public class NodeProperties {
 
     public void setClientRouterBaseUrl(String clientRouterBaseUrl) {
         this.clientRouterBaseUrl = clientRouterBaseUrl;
+    }
+
+    public Integer getBindPort() {
+        return bindPort;
+    }
+
+    public void setBindPort(Integer bindPort) {
+        this.bindPort = bindPort;
     }
 
     public long getGossipIntervalMs() {
@@ -132,6 +141,10 @@ public class NodeProperties {
         return Integer.parseInt(normalized.substring(separator + 1));
     }
 
+    public int getBindPortOrDefault() {
+        return bindPort != null ? bindPort : getPort();
+    }
+
     public static NodeProperties fromArgs(String[] args) {
         NodeProperties properties = new NodeProperties();
         for (String arg : args) {
@@ -148,6 +161,7 @@ public class NodeProperties {
                 case "node.address" -> properties.setAddress(value);
                 case "node.seed-address" -> properties.setSeedAddress(value);
                 case "node.client-router-base-url" -> properties.setClientRouterBaseUrl(value);
+                case "node.bind-port" -> properties.setBindPort(Integer.parseInt(value));
                 case "node.gossip-interval-ms" -> properties.setGossipIntervalMs(Long.parseLong(value));
                 case "node.self-heartbeat-interval-ms" -> properties.setSelfHeartbeatIntervalMs(Long.parseLong(value));
                 case "node.failure-detection-interval-ms" ->

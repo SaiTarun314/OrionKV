@@ -69,7 +69,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
             return;
         }
 
-        int grpcPort = nodeProperties.getPort();
+        int grpcPort = nodeProperties.getBindPortOrDefault();
         if (grpcPort <= 0) {
             log.info("Skipping gRPC control-plane startup because configured node port is {}", grpcPort);
             return;

@@ -71,6 +71,7 @@ for node in $NODE_IDS; do
     "--server.port=${http_port}"
     "--node.node-id=node-${node}"
     "--node.address=127.0.0.1:${grpc_port}"
+    "--node.bind-port=${grpc_port}"
     "--node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}"
     "--dataplane.storage.log-path=${wal_path}"
     "--node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}"
