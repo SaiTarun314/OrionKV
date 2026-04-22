@@ -19,6 +19,7 @@ LOAD_KEY_PREFIX="${LOAD_KEY_PREFIX:-bulk-key}"
 LOAD_VALUE_PREFIX="${LOAD_VALUE_PREFIX:-bulk-value}"
 SAMPLE_SIZE="${SAMPLE_SIZE:-500}"
 WAIT_SECONDS="${WAIT_SECONDS:-20}"
+CLIENT_ROUTER_URL="${CLIENT_ROUTER_URL:-http://152.7.177.154:8090/client/nodes/seed}"
 
 compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
@@ -59,6 +60,7 @@ WRITE_QUORUM="${WRITE_QUORUM}" \
 READ_QUORUM="${READ_QUORUM}" \
 JAVA_OPTS="${JAVA_OPTS}" \
 IMAGE_NAME="${IMAGE_NAME}" \
+CLIENT_ROUTER_URL="${CLIENT_ROUTER_URL}" \
 ./scripts/generate-docker-compose.sh
 
 echo "==> Starting docker cluster"
@@ -88,6 +90,7 @@ COORDINATOR_PORTS="${COORDINATOR_PORTS}" \
 cat <<EOF
 
 E2E flow complete.
+Client router seed endpoint: ${CLIENT_ROUTER_URL}
 
 Useful follow-ups:
   compose_cmd -f docker-compose.generated.yml ps
