@@ -113,7 +113,8 @@ class QuorumCoordinatorServiceTest {
         assertThat(response.getSuccess()).isTrue();
         assertThat(response.getAckCount()).isEqualTo(1);
         assertThat(response.getRequiredAcks()).isEqualTo(1);
-        assertThat(response.getMessage()).isEqualTo("delete quorum satisfied");
+        assertThat(response.getAcknowledgedNodeIdsList()).containsExactly("node-a");
+        assertThat(response.getMessage()).contains("delete quorum satisfied");
         assertThat(storageService.appliedReplicaWrites).hasSize(1);
         ReplicaRecord localReplicaWrite = storageService.appliedReplicaWrites.get(0);
         assertThat(localReplicaWrite.key()).isEqualTo("deleted-key");
@@ -226,6 +227,110 @@ class QuorumCoordinatorServiceTest {
         assertThat(response.getValue()).isEqualTo("fresh");
         assertThat(staleReplicaRepairLatch.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(repairRequests).anyMatch(entry -> entry.startsWith("127.0.0.1:9093|req-read-repair-read-repair|300"));
+    }
+
+    @Test
+    void getExcludesSuspectReplicaAndReportsActiveAgreement() {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setReplicationFactor(3);
+        nodeProperties.setWriteQuorum(2);
+        nodeProperties.setReadQuorum(2);
+
+        RecordingStorageService storageService = new RecordingStorageService();
+        storageService.versionedValue = new StoredValue("demo-key", "fresh", 300L, false, 777L, "node-a");
+        StubReplicaRoutingService replicaRoutingService = new StubReplicaRoutingService(
+                new ReplicaRoute("demo-key", 777L, List.of("node-a", "node-b", "node-c"))
+        );
+
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.mergeRemoteMembership(List.of(
+                member("node-a", "127.0.0.1:9091"),
+                new MemberRecord("node-b", "127.0.0.1:9092", MemberStatus.SUSPECT, 1L,
+                        Instant.parse("2026-04-17T20:00:00Z")),
+                member("node-c", "127.0.0.1:9093")
+        ));
+
+        ReplicaDataClient replicaDataClient = new ReplicaDataClient() {
+            @Override
+            public boolean putReplica(String targetAddress, String requestId, ReplicaRecord record) {
+                return true;
+            }
+
+            @Override
+            public com.orionkv.coordinationplane.model.ReplicaReadResult getReplica(
+                    String targetAddress,
+                    String requestId,
+                    String key
+            ) {
+                if ("127.0.0.1:9093".equals(targetAddress)) {
+                    return new com.orionkv.coordinationplane.model.ReplicaReadResult(
+                            true, true, key, "fresh", 777L, 300L, false, "node-c"
+                    );
+                }
+                return new com.orionkv.coordinationplane.model.ReplicaReadResult(false, false, key, null, -1L, -1L, false, null);
+            }
+        };
+
+        QuorumCoordinatorService quorumCoordinatorService = new QuorumCoordinatorService(
+                nodeProperties,
+                replicaRoutingService,
+                new QuorumService(),
+                membershipService,
+                storageService,
+                replicaDataClient
+        );
+
+        var response = quorumCoordinatorService.get("req-suspect-read", "demo-key");
+
+        assertThat(response.getFound()).isTrue();
+        assertThat(response.getReplicaNodeIdsList()).containsExactly("node-a", "node-c");
+        assertThat(response.getRespondedNodeIdsList()).containsExactly("node-a", "node-c");
+        assertThat(response.getResponseCount()).isEqualTo(2);
+        assertThat(response.getMessage()).contains("2/2 active replicas");
+    }
+
+    @Test
+    void writeFailsWhenActiveReplicasAreFewerThanRequiredQuorum() {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setNodeId("node-a");
+        nodeProperties.setReplicationFactor(3);
+        nodeProperties.setWriteQuorum(3);
+        nodeProperties.setReadQuorum(2);
+
+        RecordingStorageService storageService = new RecordingStorageService();
+        StubReplicaRoutingService replicaRoutingService = new StubReplicaRoutingService(
+                new ReplicaRoute("degraded-key", 900L, List.of("node-a", "node-b", "node-c"))
+        );
+
+        MembershipService membershipService = new MembershipService(
+                Clock.fixed(Instant.parse("2026-04-17T20:00:00Z"), ZoneOffset.UTC)
+        );
+        membershipService.mergeRemoteMembership(List.of(
+                member("node-a", "127.0.0.1:9091"),
+                new MemberRecord("node-b", "127.0.0.1:9092", MemberStatus.SUSPECT, 1L,
+                        Instant.parse("2026-04-17T20:00:00Z")),
+                member("node-c", "127.0.0.1:9093")
+        ));
+
+        QuorumCoordinatorService quorumCoordinatorService = new QuorumCoordinatorService(
+                nodeProperties,
+                replicaRoutingService,
+                new QuorumService(),
+                membershipService,
+                storageService,
+                new StubReplicaDataClient()
+        );
+
+        var response = quorumCoordinatorService.put("req-suspect-write", "degraded-key", "value", 1000L);
+
+        assertThat(response.getSuccess()).isFalse();
+        assertThat(response.getAckCount()).isEqualTo(2);
+        assertThat(response.getReplicaNodeIdsList()).containsExactly("node-a", "node-c");
+        assertThat(response.getAcknowledgedNodeIdsList()).containsExactly("node-a", "node-c");
+        assertThat(response.getMessage()).contains("2/2 active replicas").contains("3 required");
     }
 
     private static MemberRecord member(String nodeId, String address) {

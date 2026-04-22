@@ -8,6 +8,38 @@ OrionKV is a single node application that contains all three planes:
 
 Kubernetes is intentionally out of scope in this document.
 
+## Node Architecture
+
+```text
+                +----------------------------------+
+                |               NODE               |
+                +----------------------------------+
+
+   ┌──────────────────────────────────────────────┐    ┌──────────────────────────────────────────────┐
+   │           Coordination Plane                 │<---│              Data Plane                      │
+   │----------------------------------------------│    │----------------------------------------------│
+   │  Client API Controller                       │    │  Replica API Controller                      │
+   │  Coordinator Service                         │    │  Replica Service (idempotent writes)         │
+   │  Quorum Manager (R/W logic)                  │    │  Storage Engine                              │
+   │                                              │    │  - versioned KV                              │
+   │                                              │    │  - WAL / persistence                         │
+   │                                              │    │  - range scan                                │
+   │                                              │    │                                              │
+   │                                              │    │  Streaming / Bootstrap Service               │
+   └──────────────────────────────────────────────┘    └──────────────────────────────────────────────┘
+                        |
+                        |
+                        v
+                    ┌──────────────────────────────────────────────────────┐
+                    │                  Control Plane                       │
+                    │------------------------------------------------------│
+                    │  Hash Ring Service (partitioning)                    │
+                    │  Replica Selection Logic                             │
+                    │  Gossip Membership Service                           │
+                    │  Failure Detection                                   │
+                    └──────────────────────────────────────────────────────┘
+```
+
 ## Current Code Structure
 
 - `src/main/java/com/orionkv/NodeApplication.java`
