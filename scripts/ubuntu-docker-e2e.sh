@@ -19,7 +19,9 @@ LOAD_KEY_PREFIX="${LOAD_KEY_PREFIX:-bulk-key}"
 LOAD_VALUE_PREFIX="${LOAD_VALUE_PREFIX:-bulk-value}"
 SAMPLE_SIZE="${SAMPLE_SIZE:-500}"
 WAIT_SECONDS="${WAIT_SECONDS:-20}"
+SEED_WAIT_SECONDS="${SEED_WAIT_SECONDS:-30}"
 CLIENT_ROUTER_URL="${CLIENT_ROUTER_URL:-http://152.7.177.154:8090/client/nodes/seed}"
+HOST_IP="${HOST_IP:-127.0.0.1}"
 
 compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
@@ -45,6 +47,22 @@ require_cmd docker
 require_cmd grpcurl
 require_cmd python3
 
+wait_for_seed() {
+  local grpc_port="${1:-19091}"
+  local timeout_seconds="${2:-30}"
+  local deadline=$(( $(date +%s) + timeout_seconds ))
+
+  while (( $(date +%s) < deadline )); do
+    if grpcurl -plaintext -d '{}' -proto src/main/proto/controlplane.proto \
+      "127.0.0.1:${grpc_port}" orionkv.node.ClusterRpc/GetMembership >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
 echo "==> Building image ${IMAGE_NAME}"
 docker build -t "${IMAGE_NAME}" .
 
@@ -61,9 +79,20 @@ READ_QUORUM="${READ_QUORUM}" \
 JAVA_OPTS="${JAVA_OPTS}" \
 IMAGE_NAME="${IMAGE_NAME}" \
 CLIENT_ROUTER_URL="${CLIENT_ROUTER_URL}" \
+HOST_IP="${HOST_IP}" \
 ./scripts/generate-docker-compose.sh
 
-echo "==> Starting docker cluster"
+echo "==> Starting seed node first"
+compose_cmd -f docker-compose.generated.yml up -d node-1
+
+echo "==> Waiting up to ${SEED_WAIT_SECONDS}s for node-1 to become reachable"
+if ! wait_for_seed 19091 "${SEED_WAIT_SECONDS}"; then
+  echo "node-1 did not become reachable in time"
+  compose_cmd -f docker-compose.generated.yml logs --tail=200 node-1 || true
+  exit 1
+fi
+
+echo "==> Starting remaining docker nodes"
 compose_cmd -f docker-compose.generated.yml up -d
 
 echo "==> Waiting ${WAIT_SECONDS}s for gossip/join convergence"
@@ -91,6 +120,7 @@ cat <<EOF
 
 E2E flow complete.
 Client router seed endpoint: ${CLIENT_ROUTER_URL}
+Host IP for advertised node addresses: ${HOST_IP}
 
 Useful follow-ups:
   compose_cmd -f docker-compose.generated.yml ps
