@@ -12,7 +12,7 @@ public class VirtualNodeService {
     public Map<Long, String> generateTokens(String nodeId, int virtualNodeCount) {
         Map<Long, String> tokens = new LinkedHashMap<>();
         for (int i = 0; i < virtualNodeCount; i++) {
-            tokens.put(HashUtil.hash(nodeId + i), nodeId);
+            tokens.put(HashUtil.hash(nodeId + "#" + i), nodeId);
         }
         return tokens;
     }

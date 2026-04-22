@@ -23,21 +23,34 @@ compose_cmd() {
   exit 1
 }
 
+run_with_optional_sudo() {
+  if "$@"; then
+    return 0
+  fi
+  local status=$?
+  if command -v sudo >/dev/null 2>&1; then
+    echo "Command failed without sudo, retrying with sudo: $*" >&2
+    sudo "$@"
+    return 0
+  fi
+  return "$status"
+}
+
 echo "Stopping Docker cluster if it exists"
 if [[ -f "$COMPOSE_FILE" ]]; then
   compose_cmd -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
 fi
 
 if [[ "$WIPE_DATA" == "true" ]]; then
-  rm -rf docker-data
+  run_with_optional_sudo rm -rf docker-data
   echo "Removed docker-data/"
 fi
 
-rm -f docker-compose.generated.yml
+run_with_optional_sudo rm -f docker-compose.generated.yml
 echo "Removed docker-compose.generated.yml"
 
 if [[ "$WIPE_LOCAL_STATE" == "true" ]]; then
-  rm -rf data logs pids
+  run_with_optional_sudo rm -rf data logs pids
   echo "Removed local data/logs/pids"
 fi
 

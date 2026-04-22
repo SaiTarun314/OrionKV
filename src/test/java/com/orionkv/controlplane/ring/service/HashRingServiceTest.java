@@ -70,4 +70,20 @@ class HashRingServiceTest {
         assertThat(replicaSet.replicaNodeIds()).hasSize(2);
         assertThat(replicaSet.replicaNodeIds()).containsOnly("node-a", "node-b");
     }
+
+    @Test
+    void shouldAvoidVNodeSeedCollisionsAcrossSimilarNodeIds() {
+        NodeProperties nodeProperties = new NodeProperties();
+        nodeProperties.setVirtualNodeCount(20);
+        nodeProperties.setReplicationFactor(2);
+
+        HashRingService hashRingService = new HashRingService(new VirtualNodeService(), nodeProperties);
+        hashRingService.rebuildRing(List.of(
+                new MemberRecord("node-1", "http://127.0.0.1:8081", MemberStatus.ALIVE, 1, Instant.parse("2026-03-29T20:00:00Z")),
+                new MemberRecord("node-11", "http://127.0.0.1:8091", MemberStatus.ALIVE, 1, Instant.parse("2026-03-29T20:00:00Z"))
+        ));
+
+        // "node-1" + 10 and "node-11" + 0 both become "node-110" without a delimiter.
+        assertThat(hashRingService.getTokenOwnerships()).hasSizeGreaterThan(30);
+    }
 }
