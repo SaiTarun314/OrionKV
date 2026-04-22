@@ -1,8 +1,10 @@
 package com.orionkv.config;
 
 import com.orionkv.controlplane.bootstrap.rpc.ClusterRpcHandler;
+import com.orionkv.controlplane.bootstrap.service.ClientRouterSeedClient;
 import com.orionkv.controlplane.bootstrap.service.GracefulLeaveService;
 import com.orionkv.controlplane.bootstrap.service.JoinService;
+import com.orionkv.clientrouter.dto.JoinSeedResponse;
 import com.orionkv.controlplane.membership.rpc.GossipRpcHandler;
 import com.orionkv.controlplane.membership.service.MembershipService;
 import com.orionkv.controlplane.ring.service.HashRingService;
@@ -26,6 +28,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
     private final NodeProperties nodeProperties;
     private final MembershipService membershipService;
     private final HashRingService hashRingService;
+    private final ClientRouterSeedClient clientRouterSeedClient;
     private final JoinService joinService;
     private final GracefulLeaveService gracefulLeaveService;
     private final GossipRpcHandler gossipRpcHandler;
@@ -38,6 +41,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
             NodeProperties nodeProperties,
             MembershipService membershipService,
             HashRingService hashRingService,
+            ClientRouterSeedClient clientRouterSeedClient,
             JoinService joinService,
             GracefulLeaveService gracefulLeaveService,
             GossipRpcHandler gossipRpcHandler,
@@ -48,6 +52,7 @@ public class GrpcServerLifecycle implements ApplicationRunner {
         this.nodeProperties = nodeProperties;
         this.membershipService = membershipService;
         this.hashRingService = hashRingService;
+        this.clientRouterSeedClient = clientRouterSeedClient;
         this.joinService = joinService;
         this.gracefulLeaveService = gracefulLeaveService;
         this.gossipRpcHandler = gossipRpcHandler;
@@ -92,9 +97,33 @@ public class GrpcServerLifecycle implements ApplicationRunner {
             }
         }));
 
-        if (nodeProperties.getSeedAddress() != null && !nodeProperties.getSeedAddress().isBlank()) {
-            joinSeedWithRetry(nodeProperties.getSeedAddress());
+        String seedAddress = resolveSeedAddressForStartup();
+        if (seedAddress != null && !seedAddress.isBlank()) {
+            joinSeedWithRetry(seedAddress);
         }
+    }
+
+    String resolveSeedAddressForStartup() {
+        try {
+            java.util.Optional<JoinSeedResponse> resolvedSeed = clientRouterSeedClient.resolveJoinSeed();
+            if (resolvedSeed.isPresent()) {
+                JoinSeedResponse seedResponse = resolvedSeed.get();
+                if (seedResponse.bootstrapSelf()) {
+                    log.info("Client router selected node {} to bootstrap itself as the initial seed",
+                            nodeProperties.getNodeId());
+                    return null;
+                }
+                if (seedResponse.seedGrpcAddress() != null && !seedResponse.seedGrpcAddress().isBlank()) {
+                    log.info("Client router resolved seed {} at {} for node {}",
+                            seedResponse.seedNodeId(), seedResponse.seedGrpcAddress(), nodeProperties.getNodeId());
+                    return seedResponse.seedGrpcAddress();
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Client router seed resolution failed: {}", ex.getMessage());
+        }
+
+        return nodeProperties.getSeedAddress();
     }
 
     private void joinSeedWithRetry(String seedAddress) {
