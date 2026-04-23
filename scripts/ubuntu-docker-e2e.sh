@@ -7,9 +7,9 @@ cd "$ROOT_DIR"
 NODE_COUNT="${NODE_COUNT:-25}"
 NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
 TOTAL_KEYS="${TOTAL_KEYS:-10000}"
-KEY_START_INDEX="${KEY_START_INDEX:-$((NODE_ID_OFFSET * TOTAL_KEYS + 1))}"
+KEY_START_INDEX="${KEY_START_INDEX:-$(( (NODE_ID_OFFSET / NODE_COUNT) * TOTAL_KEYS + 1 ))}"
 CONCURRENCY="${CONCURRENCY:-64}"
-VIRTUAL_NODE_COUNT="${VIRTUAL_NODE_COUNT:-128}"
+VIRTUAL_NODE_COUNT="${VIRTUAL_NODE_COUNT:-1024}"
 REPLICATION_FACTOR="${REPLICATION_FACTOR:-3}"
 WRITE_QUORUM="${WRITE_QUORUM:-2}"
 READ_QUORUM="${READ_QUORUM:-2}"
@@ -247,21 +247,9 @@ FIRST_GRPC_PORT=$((19090 + FIRST_NODE_ID))
 FIRST_GRPC_ADDRESS="${HOST_IP}:${FIRST_GRPC_PORT}"
 
 if [[ -z "$COORDINATOR_PORTS" ]]; then
-  declare -A seen_ports=()
   coordinator_ports=()
-  sample_positions=(1 $(( (NODE_COUNT + 2) / 3 )) $(( (2 * NODE_COUNT + 2) / 3 )) "$NODE_COUNT")
-  for position in "${sample_positions[@]}"; do
-    if (( position < 1 )); then
-      position=1
-    fi
-    if (( position > NODE_COUNT )); then
-      position=$NODE_COUNT
-    fi
-    port=$((19090 + NODE_ID_OFFSET + position))
-    if [[ -z "${seen_ports[$port]:-}" ]]; then
-      coordinator_ports+=("$port")
-      seen_ports[$port]=1
-    fi
+  for position in $(seq 1 "$NODE_COUNT"); do
+    coordinator_ports+=("$((19090 + NODE_ID_OFFSET + position))")
   done
   COORDINATOR_PORTS="${coordinator_ports[*]}"
 fi
