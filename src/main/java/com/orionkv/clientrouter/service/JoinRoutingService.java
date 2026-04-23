@@ -51,24 +51,43 @@ public class JoinRoutingService {
         final String attemptedSeedAddress = seedAddress;
         try {
             MembershipState membership = clusterClient.getMembership(attemptedSeedAddress);
+            if (membership == null) {
+                throw new IllegalStateException("No membership returned from " + attemptedSeedAddress);
+            }
             return nodeRegistryService.replaceFromMembership(membership);
         } catch (RuntimeException ex) {
-            for (RouterNodeRecord node : nodeRegistryService.aliveNodes()) {
-                if (attemptedSeedAddress.equals(node.grpcAddress())) {
-                    nodeRegistryService.markNodeStatus(node.nodeId(), com.orionkv.clientrouter.model.NodeStatus.DEAD);
-                    break;
-                }
-            }
+            RouterNodeRecord attemptedSeedNode = nodeRegistryService.aliveNodes().stream()
+                    .filter(node -> attemptedSeedAddress.equals(node.grpcAddress()))
+                    .findFirst()
+                    .orElse(null);
 
-            String fallbackSeed = nodeRegistryService.pickAliveNode()
+            String fallbackSeed = nodeRegistryService.aliveNodes().stream()
                     .map(RouterNodeRecord::grpcAddress)
                     .filter(address -> !address.equals(attemptedSeedAddress))
+                    .findFirst()
                     .orElse(null);
             if (fallbackSeed != null && !fallbackSeed.isBlank()) {
                 MembershipState membership = clusterClient.getMembership(fallbackSeed);
+                if (membership == null) {
+                    throw ex;
+                }
+                if (attemptedSeedNode != null) {
+                    nodeRegistryService.markNodeStatus(
+                            attemptedSeedNode.nodeId(),
+                            com.orionkv.clientrouter.model.NodeStatus.DEAD
+                    );
+                }
                 return nodeRegistryService.replaceFromMembership(membership);
             }
             throw ex;
+        }
+    }
+
+    public RouterRegistrySnapshot refreshFromClusterBestEffort(String preferredSeedGrpcAddress) {
+        try {
+            return refreshFromCluster(preferredSeedGrpcAddress);
+        } catch (RuntimeException ex) {
+            return nodeRegistryService.snapshot();
         }
     }
 
@@ -82,7 +101,7 @@ public class JoinRoutingService {
 
         RouterRegistrySnapshot lastSnapshot = null;
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
-            lastSnapshot = refreshFromCluster(seedGrpcAddress);
+            lastSnapshot = refreshFromClusterBestEffort(seedGrpcAddress);
             boolean confirmed = lastSnapshot.nodes().stream()
                     .anyMatch(node -> node.nodeId().equals(joiningNodeId) && node.isAlive());
             if (confirmed) {

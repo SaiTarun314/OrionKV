@@ -115,6 +115,30 @@ class JoinRoutingServiceTest {
                 .containsExactly("node-2:10.0.0.2:9092");
     }
 
+    @Test
+    void shouldConfirmJoinFromLocalRegistryWhenClusterRefreshIsUnavailable() {
+        NodeRegistryService registryService = registry(tempDir.resolve("confirm-unavailable.json"));
+        registryService.upsertManualNode("node-1", "152.7.178.169:19091");
+        registryService.upsertManualNode("node-2", "152.7.178.169:19092");
+
+        StubClusterClient clusterClient = new StubClusterClient();
+        clusterClient.failAddress = "152.7.178.169:19091";
+
+        JoinRoutingService joinRoutingService = new JoinRoutingService(registryService, clusterClient, properties());
+
+        JoinConfirmationResponse confirmation = joinRoutingService.confirmJoin(
+                "node-2",
+                "152.7.178.169:19091",
+                1,
+                1L
+        );
+
+        assertThat(confirmation.confirmed()).isTrue();
+        assertThat(confirmation.registry().nodes())
+                .extracting(node -> node.nodeId() + ":" + node.status())
+                .contains("node-1:ALIVE", "node-2:ALIVE");
+    }
+
     private NodeRegistryService registry(Path path) {
         NodeRegistryService service = new NodeRegistryService(
                 new ObjectMapper().findAndRegisterModules(),
