@@ -46,11 +46,22 @@ if ! [[ "$START_INDEX" =~ ^[0-9]+$ ]] || (( START_INDEX < 1 )); then
 fi
 
 discover_targets() {
-  curl -fsS "${CLIENT_ROUTER_BASE_URL}/client/nodes" | python3 - <<'PY'
+  local json
+  if ! json="$(curl -fsS "${CLIENT_ROUTER_BASE_URL}/client/nodes")"; then
+    echo "Failed to fetch ${CLIENT_ROUTER_BASE_URL}/client/nodes" >&2
+    return 1
+  fi
+
+  python3 -c '
 import json
 import sys
 
-data = json.load(sys.stdin)
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print(f"Invalid JSON from /client/nodes: {exc}", file=sys.stderr)
+    sys.exit(1)
+
 nodes = data.get("nodes", [])
 alive = []
 for node in nodes:
@@ -60,11 +71,9 @@ for node in nodes:
     if address:
         alive.append(address)
 
-# deterministic ordering for reproducibility
-alive = sorted(set(alive))
-for address in alive:
+for address in sorted(set(alive)):
     print(address)
-PY
+' <<<"$json"
 }
 
 if [[ -z "$TARGETS" ]]; then
