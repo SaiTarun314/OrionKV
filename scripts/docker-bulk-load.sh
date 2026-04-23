@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
-TOTAL_KEYS="${TOTAL_KEYS:-50000}"
+TOTAL_KEYS="${TOTAL_KEYS:-10000}"
 CONCURRENCY="${CONCURRENCY:-64}"
 START_INDEX="${START_INDEX:-1}"
 KEY_PREFIX="${KEY_PREFIX:-bulk-key}"
