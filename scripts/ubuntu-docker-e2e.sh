@@ -93,7 +93,7 @@ wait_for_node_in_membership() {
   while (( $(date +%s) < deadline )); do
     local snapshot
     if snapshot="$(membership_snapshot "$grpc_port" 2>/dev/null)"; then
-      if python3 - "$node_id" <<'PY' <<<"$snapshot"
+      if python3 -c '
 import json
 import sys
 
@@ -103,7 +103,7 @@ for member in data.get("membership", []):
     if member.get("nodeId") == node_id and member.get("status") == "ALIVE":
         raise SystemExit(0)
 raise SystemExit(1)
-PY
+' "$node_id" <<<"$snapshot"
       then
         return 0
       fi
@@ -127,7 +127,7 @@ register_node_with_client_router() {
 }
 
 client_router_alive_count() {
-  python3 - <<'PY' < <(client_router_nodes)
+  python3 -c '
 import json
 import sys
 
@@ -135,7 +135,7 @@ data = json.load(sys.stdin)
 nodes = data.get("nodes", [])
 alive = sum(1 for node in nodes if node.get("status") == "ALIVE")
 print(alive)
-PY
+' < <(client_router_nodes)
 }
 
 confirm_node_with_client_router() {
@@ -153,17 +153,16 @@ confirm_node_with_client_router() {
       -d "{\"joiningNodeId\":\"${node_id}\",\"seedGrpcAddress\":\"${seed_grpc_address}\",\"pollAttempts\":10,\"pollDelayMs\":1000}")"
     then
       local confirmed
-      confirmed="$(python3 - <<'PY' <<<"$response"
+      confirmed="$(python3 -c '
 import json
 import sys
 
 data = json.load(sys.stdin)
 print("true" if data.get("confirmed") else "false")
-PY
-)"
+      ' <<<"$response")"
       if [[ "$confirmed" == "true" ]]; then
         local alive_count
-        alive_count="$(python3 - <<'PY' <<<"$response"
+        alive_count="$(python3 -c '
 import json
 import sys
 
@@ -172,8 +171,7 @@ registry = data.get("registry") or {}
 nodes = registry.get("nodes") or []
 alive = sum(1 for node in nodes if node.get("status") == "ALIVE")
 print(alive)
-PY
-)"
+        ' <<<"$response")"
         echo "==> Client-router now sees ${alive_count} alive node(s)"
         return 0
       fi
