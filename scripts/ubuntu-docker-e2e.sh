@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
 NODE_COUNT="${NODE_COUNT:-25}"
+NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
 TOTAL_KEYS="${TOTAL_KEYS:-50000}"
 CONCURRENCY="${CONCURRENCY:-64}"
 VIRTUAL_NODE_COUNT="${VIRTUAL_NODE_COUNT:-128}"
@@ -60,7 +61,8 @@ normalize_client_router_base_url() {
 }
 
 CLIENT_ROUTER_BASE_URL="$(normalize_client_router_base_url "$CLIENT_ROUTER_URL")"
-SEED_GRPC_ADDRESS="${HOST_IP}:19091"
+SEED_NODE_ID="${SEED_NODE_ID:-1}"
+SEED_GRPC_ADDRESS="${HOST_IP}:$((19090 + SEED_NODE_ID))"
 
 wait_for_seed() {
   local grpc_port="${1:-19091}"
@@ -191,6 +193,7 @@ rm -rf docker-data
 
 echo "==> Generating compose for ${NODE_COUNT} nodes"
 NODE_COUNT="${NODE_COUNT}" \
+NODE_ID_OFFSET="${NODE_ID_OFFSET}" \
 VIRTUAL_NODE_COUNT="${VIRTUAL_NODE_COUNT}" \
 REPLICATION_FACTOR="${REPLICATION_FACTOR}" \
 WRITE_QUORUM="${WRITE_QUORUM}" \
@@ -202,27 +205,33 @@ CLIENT_ROUTER_URL="${CLIENT_ROUTER_URL}" \
 HOST_IP="${HOST_IP}" \
 ./scripts/generate-docker-compose.sh
 
-echo "==> Starting seed node first"
-compose_cmd -f docker-compose.generated.yml up -d node-1
+FIRST_NODE_ID=$((NODE_ID_OFFSET + 1))
+LAST_NODE_ID=$((NODE_ID_OFFSET + NODE_COUNT))
+FIRST_NODE_NAME="node-${FIRST_NODE_ID}"
+FIRST_GRPC_PORT=$((19090 + FIRST_NODE_ID))
+FIRST_GRPC_ADDRESS="${HOST_IP}:${FIRST_GRPC_PORT}"
 
-echo "==> Waiting up to ${SEED_WAIT_SECONDS}s for node-1 to become reachable"
-if ! wait_for_seed 19091 "${SEED_WAIT_SECONDS}"; then
-  echo "node-1 did not become reachable in time"
-  compose_cmd -f docker-compose.generated.yml logs --tail=200 node-1 || true
+echo "==> Starting first node ${FIRST_NODE_NAME}"
+compose_cmd -f docker-compose.generated.yml up -d "${FIRST_NODE_NAME}"
+
+echo "==> Waiting up to ${SEED_WAIT_SECONDS}s for ${FIRST_NODE_NAME} to become reachable"
+if ! wait_for_seed "${FIRST_GRPC_PORT}" "${SEED_WAIT_SECONDS}"; then
+  echo "${FIRST_NODE_NAME} did not become reachable in time"
+  compose_cmd -f docker-compose.generated.yml logs --tail=200 "${FIRST_NODE_NAME}" || true
   exit 1
 fi
 
-if ! wait_for_node_in_membership "node-1" 19091 "${SEED_WAIT_SECONDS}"; then
-  echo "node-1 did not appear as ALIVE in membership in time"
-  membership_snapshot 19091 || true
+if ! wait_for_node_in_membership "${FIRST_NODE_NAME}" "${FIRST_GRPC_PORT}" "${SEED_WAIT_SECONDS}"; then
+  echo "${FIRST_NODE_NAME} did not appear as ALIVE in membership in time"
+  membership_snapshot "${FIRST_GRPC_PORT}" || true
   exit 1
 fi
 
-echo "==> Registering node-1 with client-router"
-register_node_with_client_router "node-1" "${SEED_GRPC_ADDRESS}"
+echo "==> Registering ${FIRST_NODE_NAME} with client-router"
+register_node_with_client_router "${FIRST_NODE_NAME}" "${FIRST_GRPC_ADDRESS}"
 echo "==> Client-router now sees $(client_router_alive_count) alive node(s)"
-if ! confirm_node_with_client_router "node-1" "${SEED_GRPC_ADDRESS}"; then
-  echo "client-router confirmation failed for node-1"
+if ! confirm_node_with_client_router "${FIRST_NODE_NAME}" "${SEED_GRPC_ADDRESS}"; then
+  echo "client-router confirmation failed for ${FIRST_NODE_NAME}"
   client_router_nodes || true
   exit 1
 fi
@@ -232,7 +241,7 @@ if (( NODE_COUNT > 1 )); then
   compose_cmd -f docker-compose.generated.yml up -d
 fi
 
-for node_id in $(seq 2 "$NODE_COUNT"); do
+for node_id in $(seq "$((FIRST_NODE_ID + 1))" "$LAST_NODE_ID"); do
   node_name="node-${node_id}"
   grpc_port=$((19090 + node_id))
   grpc_address="${HOST_IP}:${grpc_port}"
@@ -245,10 +254,10 @@ for node_id in $(seq 2 "$NODE_COUNT"); do
   fi
 
   echo "==> Waiting for ${node_name} to appear in seed membership"
-  if ! wait_for_node_in_membership "${node_name}" 19091 "${SEED_WAIT_SECONDS}"; then
+  if ! wait_for_node_in_membership "${node_name}" "$((19090 + SEED_NODE_ID))" "${SEED_WAIT_SECONDS}"; then
     echo "${node_name} did not appear as ALIVE in cluster membership in time"
     compose_cmd -f docker-compose.generated.yml logs --tail=200 "${node_name}" || true
-    membership_snapshot 19091 || true
+    membership_snapshot "$((19090 + SEED_NODE_ID))" || true
     exit 1
   fi
 
@@ -293,6 +302,7 @@ cat <<EOF
 
 E2E flow complete.
 Docker network mode: ${NETWORK_MODE}
+Node ID offset: ${NODE_ID_OFFSET}
 Client router seed endpoint: ${CLIENT_ROUTER_URL}
 Client router base URL: ${CLIENT_ROUTER_BASE_URL}
 Host IP for advertised node addresses: ${HOST_IP}

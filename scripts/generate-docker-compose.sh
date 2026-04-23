@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
 NODE_COUNT="${NODE_COUNT:-100}"
+NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
 HTTP_PORT_BASE="${HTTP_PORT_BASE:-18080}"
 GRPC_PORT_BASE="${GRPC_PORT_BASE:-19090}"
 SERVER_PORT="${SERVER_PORT:-8080}"
@@ -43,17 +44,23 @@ if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || (( NODE_COUNT < 1 )); then
   exit 1
 fi
 
+if ! [[ "$NODE_ID_OFFSET" =~ ^[0-9]+$ ]]; then
+  echo "NODE_ID_OFFSET must be a non-negative integer"
+  exit 1
+fi
+
 cat > "$OUTPUT_FILE" <<EOF
 services:
 EOF
 
 for i in $(seq 1 "$NODE_COUNT"); do
-  http_port=$((HTTP_PORT_BASE + i))
-  grpc_port=$((GRPC_PORT_BASE + i))
+  node_id=$((NODE_ID_OFFSET + i))
+  http_port=$((HTTP_PORT_BASE + node_id))
+  grpc_port=$((GRPC_PORT_BASE + node_id))
   server_port="$SERVER_PORT"
   bind_port="$INTERNAL_GRPC_PORT"
   seed_args=""
-  if (( i > 1 )); then
+  if (( node_id > 1 )); then
     seed_args=" --node.seed-address=${HOST_IP}:$((GRPC_PORT_BASE + 1))"
   fi
 
@@ -63,10 +70,10 @@ for i in $(seq 1 "$NODE_COUNT"); do
   fi
 
   cat >> "$OUTPUT_FILE" <<EOF
-  node-$i:
+  node-$node_id:
     image: ${IMAGE_NAME}
-    container_name: orionkv-node-$i
-    hostname: node-$i
+    container_name: orionkv-node-$node_id
+    hostname: node-$node_id
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.75
@@ -83,7 +90,7 @@ EOF
       JAVA_OPTS: "${JAVA_OPTS}"
       APP_ARGS: >-
         --server.port=${server_port}
-        --node.node-id=node-$i
+        --node.node-id=node-$node_id
         --node.address=${HOST_IP}:${grpc_port}
         --node.bind-port=${bind_port}
         --node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}
@@ -97,9 +104,9 @@ EOF
         --node.replication-factor=${REPLICATION_FACTOR}
         --node.write-quorum=${WRITE_QUORUM}
         --node.read-quorum=${READ_QUORUM}
-        --dataplane.storage.log-path=/app/data/node-${i}.wal.log
+        --dataplane.storage.log-path=/app/data/node-${node_id}.wal.log
     volumes:
-      - ./docker-data/node-$i:/app/data
+      - ./docker-data/node-$node_id:/app/data
 EOF
 
   if [[ "$NETWORK_MODE" != "host" ]]; then
@@ -121,6 +128,7 @@ Generated ${OUTPUT_FILE}
 
 Image: ${IMAGE_NAME}
 Nodes: ${NODE_COUNT}
+Node ID offset: ${NODE_ID_OFFSET}
 Network mode: ${NETWORK_MODE}
 Host IP: ${HOST_IP}
 Client router: ${CLIENT_ROUTER_BASE_URL}
