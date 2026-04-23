@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 NODE_COUNT="${NODE_COUNT:-25}"
 NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
 TOTAL_KEYS="${TOTAL_KEYS:-50000}"
+KEY_START_INDEX="${KEY_START_INDEX:-$((NODE_ID_OFFSET * TOTAL_KEYS + 1))}"
 CONCURRENCY="${CONCURRENCY:-64}"
 VIRTUAL_NODE_COUNT="${VIRTUAL_NODE_COUNT:-128}"
 REPLICATION_FACTOR="${REPLICATION_FACTOR:-3}"
@@ -265,6 +266,7 @@ if [[ -z "$COORDINATOR_PORTS" ]]; then
   COORDINATOR_PORTS="${coordinator_ports[*]}"
 fi
 echo "==> Using coordinator ports: ${COORDINATOR_PORTS}"
+echo "==> Using key start index: ${KEY_START_INDEX}"
 
 echo "==> Starting first node ${FIRST_NODE_NAME}"
 compose_cmd -f docker-compose.generated.yml up -d "${FIRST_NODE_NAME}"
@@ -338,6 +340,7 @@ SEED_GRPC_PORT="${FIRST_GRPC_PORT}" \
 
 echo "==> Bulk loading ${TOTAL_KEYS} keys with concurrency ${CONCURRENCY}"
 TOTAL_KEYS="${TOTAL_KEYS}" \
+START_INDEX="${KEY_START_INDEX}" \
 CONCURRENCY="${CONCURRENCY}" \
 PORTS="${COORDINATOR_PORTS}" \
 KEY_PREFIX="${LOAD_KEY_PREFIX}" \
@@ -346,6 +349,7 @@ VALUE_PREFIX="${LOAD_VALUE_PREFIX}" \
 
 echo "==> Balance and replica audit"
 TOTAL_KEYS="${TOTAL_KEYS}" \
+START_INDEX="${KEY_START_INDEX}" \
 SAMPLE_SIZE="${SAMPLE_SIZE}" \
 KEY_PREFIX="${LOAD_KEY_PREFIX}" \
 COORDINATOR_PORTS="${COORDINATOR_PORTS}" \
@@ -370,5 +374,5 @@ Useful follow-ups:
   compose_cmd -f docker-compose.generated.yml ps
   sudo docker stop orionkv-node-${LAST_NODE_ID}
   NODE_COUNT=${NODE_COUNT} NODE_ID_OFFSET=${NODE_ID_OFFSET} ./scripts/docker-cluster-smoke.sh
-  TOTAL_KEYS=${TOTAL_KEYS} SAMPLE_SIZE=${SAMPLE_SIZE} ./scripts/docker-balance-audit.sh
+  TOTAL_KEYS=${TOTAL_KEYS} START_INDEX=${KEY_START_INDEX} SAMPLE_SIZE=${SAMPLE_SIZE} ./scripts/docker-balance-audit.sh
 EOF

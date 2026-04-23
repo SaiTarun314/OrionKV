@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
 TOTAL_KEYS="${TOTAL_KEYS:-50000}"
+START_INDEX="${START_INDEX:-1}"
 SAMPLE_SIZE="${SAMPLE_SIZE:-500}"
 KEY_PREFIX="${KEY_PREFIX:-bulk-key}"
 NODE_COUNT="${NODE_COUNT:-25}"
@@ -30,6 +31,11 @@ fi
 
 if ! [[ "$TOTAL_KEYS" =~ ^[0-9]+$ ]] || (( TOTAL_KEYS < 1 )); then
   echo "TOTAL_KEYS must be a positive integer"
+  exit 1
+fi
+
+if ! [[ "$START_INDEX" =~ ^[0-9]+$ ]] || (( START_INDEX < 1 )); then
+  echo "START_INDEX must be a positive integer"
   exit 1
 fi
 
@@ -69,12 +75,13 @@ if [[ -z "$COORDINATOR_PORTS" ]]; then
 fi
 
 sample_keys() {
-  python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" <<'PY'
+  python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" "$START_INDEX" <<'PY'
 import sys
 
 total = int(sys.argv[1])
 sample = int(sys.argv[2])
 prefix = sys.argv[3]
+start = int(sys.argv[4])
 
 sample = min(sample, total)
 seen = set()
@@ -89,7 +96,7 @@ else:
     indices = sorted(seen)
 
 for idx in indices:
-    print(f"{prefix}-{idx}")
+    print(f"{prefix}-{start + idx - 1}")
 PY
 }
 
@@ -109,7 +116,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 printf '%s' "$membership_json" > "${tmp_dir}/membership.json"
 
-python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" "$coord_ports_csv" "$COORDINATOR_HOST" "$PROTO_FILE" "$REQUEST_PREFIX" "$tmp_dir" <<'PY'
+python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" "$START_INDEX" "$coord_ports_csv" "$COORDINATOR_HOST" "$PROTO_FILE" "$REQUEST_PREFIX" "$tmp_dir" <<'PY'
 import json
 import math
 import subprocess
@@ -119,11 +126,12 @@ from collections import Counter, defaultdict
 total_keys = int(sys.argv[1])
 sample_size = int(sys.argv[2])
 key_prefix = sys.argv[3]
-coordinator_ports = [p for p in sys.argv[4].split(",") if p]
-coordinator_host = sys.argv[5]
-proto_file = sys.argv[6]
-request_prefix = sys.argv[7]
-tmp_dir = sys.argv[8]
+start_index = int(sys.argv[4])
+coordinator_ports = [p for p in sys.argv[5].split(",") if p]
+coordinator_host = sys.argv[6]
+proto_file = sys.argv[7]
+request_prefix = sys.argv[8]
+tmp_dir = sys.argv[9]
 
 with open(f"{tmp_dir}/membership.json", "r", encoding="utf-8") as fh:
     membership = json.load(fh)
@@ -182,7 +190,7 @@ keys_checked = 0
 quorum_failures = 0
 
 for idx in indices:
-    key = f"{key_prefix}-{idx}"
+    key = f"{key_prefix}-{start_index + idx - 1}"
     coordinator_routes = {}
     coordinator_responses = {}
 
