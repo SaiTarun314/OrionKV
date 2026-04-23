@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,16 +38,19 @@ class KvRoutingServiceTest {
         registryService.upsertManualNode("node-2", "10.0.0.2:9092");
 
         StubClusterClient clusterClient = new StubClusterClient();
+        clusterClient.unavailableAddress = "10.0.0.1:9091";
         KvRoutingService routingService = new KvRoutingService(registryService, clusterClient);
 
         var routed = routingService.get("alpha");
 
         assertThat(routed.contactedNodeId()).isEqualTo("node-2");
         assertThat(routed.response().getFound()).isTrue();
+        assertThat(clusterClient.addressesCalled).contains("10.0.0.2:9092");
     }
 
     private static final class StubClusterClient implements OrionClusterClient {
-        private int getCalls;
+        private String unavailableAddress;
+        private final List<String> addressesCalled = new ArrayList<>();
 
         @Override
         public MembershipState getMembership(String grpcAddress) {
@@ -59,8 +64,8 @@ class KvRoutingServiceTest {
 
         @Override
         public ClientGetResponse get(String grpcAddress, String requestId, String key) {
-            getCalls++;
-            if (getCalls == 1) {
+            addressesCalled.add(grpcAddress);
+            if (grpcAddress.equals(unavailableAddress)) {
                 throw new StatusRuntimeException(Status.UNAVAILABLE);
             }
             return ClientGetResponse.newBuilder()
