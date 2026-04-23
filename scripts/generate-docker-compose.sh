@@ -12,6 +12,7 @@ SERVER_PORT="${SERVER_PORT:-8080}"
 INTERNAL_GRPC_PORT="${INTERNAL_GRPC_PORT:-9090}"
 NETWORK_MODE="${NETWORK_MODE:-host}"
 HOST_IP="${HOST_IP:-127.0.0.1}"
+SEED_HOST_IP="${SEED_HOST_IP:-$HOST_IP}"
 IMAGE_NAME="${IMAGE_NAME:-orionkv:local}"
 OUTPUT_FILE="${OUTPUT_FILE:-docker-compose.generated.yml}"
 
@@ -61,7 +62,7 @@ for i in $(seq 1 "$NODE_COUNT"); do
   bind_port="$INTERNAL_GRPC_PORT"
   seed_args=""
   if (( node_id > 1 )); then
-    seed_args=" --node.seed-address=${HOST_IP}:$((GRPC_PORT_BASE + 1))"
+    seed_args=" --node.seed-address=${SEED_HOST_IP}:$((GRPC_PORT_BASE + 1))"
   fi
 
   if [[ "$NETWORK_MODE" == "host" ]]; then
@@ -131,6 +132,7 @@ Nodes: ${NODE_COUNT}
 Node ID offset: ${NODE_ID_OFFSET}
 Network mode: ${NETWORK_MODE}
 Host IP: ${HOST_IP}
+Seed host IP: ${SEED_HOST_IP}
 Client router: ${CLIENT_ROUTER_BASE_URL}
 Host port ranges:
   HTTP: ${HTTP_PORT_BASE}+node_id
