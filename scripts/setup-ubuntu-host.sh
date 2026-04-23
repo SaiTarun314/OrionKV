@@ -44,22 +44,6 @@ sudo apt-get install -y \
   python3-pip \
   ripgrep
 
-echo "==> Installing Java (JDK 21 preferred, fallback to JDK 17) and Maven"
-if sudo apt-get install -y openjdk-21-jdk maven; then
-  JAVA_BIN_DIR="/usr/lib/jvm/java-21-openjdk-${ARCH}/bin"
-else
-  echo "openjdk-21-jdk not available; falling back to openjdk-17-jdk"
-  sudo apt-get install -y openjdk-17-jdk maven
-  JAVA_BIN_DIR="/usr/lib/jvm/java-17-openjdk-${ARCH}/bin"
-fi
-
-if [[ -x "${JAVA_BIN_DIR}/java" ]]; then
-  sudo update-alternatives --set java "${JAVA_BIN_DIR}/java" || true
-fi
-if [[ -x "${JAVA_BIN_DIR}/javac" ]]; then
-  sudo update-alternatives --set javac "${JAVA_BIN_DIR}/javac" || true
-fi
-
 echo "==> Removing conflicting Docker packages if present"
 for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
   sudo apt-get remove -y "$pkg" >/dev/null 2>&1 || true
@@ -116,14 +100,6 @@ if ! grep -q '$(go env GOPATH)/bin' "$PROFILE_FILE"; then
   echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> "$PROFILE_FILE"
 fi
 
-if ! grep -q 'export JAVA_HOME=' "$PROFILE_FILE"; then
-  echo 'export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"' >> "$PROFILE_FILE"
-fi
-
-if ! grep -q 'export PATH="$JAVA_HOME/bin:$PATH"' "$PROFILE_FILE"; then
-  echo 'export PATH="$JAVA_HOME/bin:$PATH"' >> "$PROFILE_FILE"
-fi
-
 export PATH=/usr/local/go/bin:$PATH
 
 echo "==> Installing grpcurl"
@@ -139,12 +115,6 @@ echo "--- docker compose ---"
 docker compose version || true
 echo "--- go ---"
 go version || true
-echo "--- java ---"
-java -version || true
-echo "--- javac ---"
-javac -version || true
-echo "--- maven ---"
-mvn -version || true
 echo "--- grpcurl ---"
 "${GOBIN_PATH}/grpcurl" -help >/dev/null 2>&1 && echo "grpcurl installed at ${GOBIN_PATH}/grpcurl" || true
 echo "--- ripgrep ---"
@@ -159,9 +129,6 @@ Important:
 2. Then verify:
    docker ps
    docker compose version
-   java -version
-   javac -version
-   mvn -version
    go version
    grpcurl -help
    rg --version
