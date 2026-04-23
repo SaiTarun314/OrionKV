@@ -4,14 +4,19 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
-TOTAL_KEYS="${TOTAL_KEYS:-50000}"
+TOTAL_KEYS="${TOTAL_KEYS:-10000}"
+START_INDEX="${START_INDEX:-1}"
 SAMPLE_SIZE="${SAMPLE_SIZE:-500}"
 KEY_PREFIX="${KEY_PREFIX:-bulk-key}"
-COORDINATOR_PORTS="${COORDINATOR_PORTS:-19091 19095 19105 19115}"
+NODE_COUNT="${NODE_COUNT:-25}"
+NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
+COORDINATOR_PORTS="${COORDINATOR_PORTS:-}"
+COORDINATOR_HOST="${COORDINATOR_HOST:-127.0.0.1}"
 GRPC_PORT_BASE="${GRPC_PORT_BASE:-19090}"
 PROTO_FILE="${PROTO_FILE:-src/main/proto/coordination.proto}"
 CONTROL_PROTO_FILE="${CONTROL_PROTO_FILE:-src/main/proto/controlplane.proto}"
-MEMBERSHIP_PORT="${MEMBERSHIP_PORT:-19091}"
+MEMBERSHIP_HOST="${MEMBERSHIP_HOST:-127.0.0.1}"
+MEMBERSHIP_PORT="${MEMBERSHIP_PORT:-$((GRPC_PORT_BASE + NODE_ID_OFFSET + 1))}"
 REQUEST_PREFIX="${REQUEST_PREFIX:-audit}"
 
 if ! command -v grpcurl >/dev/null 2>&1; then
@@ -29,18 +34,54 @@ if ! [[ "$TOTAL_KEYS" =~ ^[0-9]+$ ]] || (( TOTAL_KEYS < 1 )); then
   exit 1
 fi
 
+if ! [[ "$START_INDEX" =~ ^[0-9]+$ ]] || (( START_INDEX < 1 )); then
+  echo "START_INDEX must be a positive integer"
+  exit 1
+fi
+
 if ! [[ "$SAMPLE_SIZE" =~ ^[0-9]+$ ]] || (( SAMPLE_SIZE < 1 )); then
   echo "SAMPLE_SIZE must be a positive integer"
   exit 1
 fi
 
+if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || (( NODE_COUNT < 1 )); then
+  echo "NODE_COUNT must be a positive integer"
+  exit 1
+fi
+
+if ! [[ "$NODE_ID_OFFSET" =~ ^[0-9]+$ ]]; then
+  echo "NODE_ID_OFFSET must be a non-negative integer"
+  exit 1
+fi
+
+if [[ -z "$COORDINATOR_PORTS" ]]; then
+  declare -A seen_ports=()
+  computed_ports=()
+  sample_positions=(1 $(( (NODE_COUNT + 2) / 3 )) $(( (2 * NODE_COUNT + 2) / 3 )) "$NODE_COUNT")
+  for position in "${sample_positions[@]}"; do
+    if (( position < 1 )); then
+      position=1
+    fi
+    if (( position > NODE_COUNT )); then
+      position=$NODE_COUNT
+    fi
+    port=$((GRPC_PORT_BASE + NODE_ID_OFFSET + position))
+    if [[ -z "${seen_ports[$port]:-}" ]]; then
+      computed_ports+=("$port")
+      seen_ports[$port]=1
+    fi
+  done
+  COORDINATOR_PORTS="${computed_ports[*]}"
+fi
+
 sample_keys() {
-  python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" <<'PY'
+  python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" "$START_INDEX" <<'PY'
 import sys
 
 total = int(sys.argv[1])
 sample = int(sys.argv[2])
 prefix = sys.argv[3]
+start = int(sys.argv[4])
 
 sample = min(sample, total)
 seen = set()
@@ -55,12 +96,12 @@ else:
     indices = sorted(seen)
 
 for idx in indices:
-    print(f"{prefix}-{idx}")
+    print(f"{prefix}-{start + idx - 1}")
 PY
 }
 
 membership_json="$(grpcurl -plaintext -d '{}' -proto "$CONTROL_PROTO_FILE" \
-  "127.0.0.1:${MEMBERSHIP_PORT}" orionkv.node.ClusterRpc/GetMembership)"
+  "${MEMBERSHIP_HOST}:${MEMBERSHIP_PORT}" orionkv.node.ClusterRpc/GetMembership)"
 
 coord_ports_csv="$(printf '%s\n' $COORDINATOR_PORTS | paste -sd, -)"
 keys_csv="$(sample_keys | paste -sd, -)"
@@ -75,7 +116,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 printf '%s' "$membership_json" > "${tmp_dir}/membership.json"
 
-python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" "$coord_ports_csv" "$GRPC_PORT_BASE" "$PROTO_FILE" "$REQUEST_PREFIX" "$tmp_dir" <<'PY'
+python3 - "$TOTAL_KEYS" "$SAMPLE_SIZE" "$KEY_PREFIX" "$START_INDEX" "$coord_ports_csv" "$COORDINATOR_HOST" "$PROTO_FILE" "$REQUEST_PREFIX" "$tmp_dir" <<'PY'
 import json
 import math
 import subprocess
@@ -85,17 +126,22 @@ from collections import Counter, defaultdict
 total_keys = int(sys.argv[1])
 sample_size = int(sys.argv[2])
 key_prefix = sys.argv[3]
-coordinator_ports = [p for p in sys.argv[4].split(",") if p]
-grpc_port_base = int(sys.argv[5])
-proto_file = sys.argv[6]
-request_prefix = sys.argv[7]
-tmp_dir = sys.argv[8]
+start_index = int(sys.argv[4])
+coordinator_ports = [p for p in sys.argv[5].split(",") if p]
+coordinator_host = sys.argv[6]
+proto_file = sys.argv[7]
+request_prefix = sys.argv[8]
+tmp_dir = sys.argv[9]
 
 with open(f"{tmp_dir}/membership.json", "r", encoding="utf-8") as fh:
     membership = json.load(fh)
 
 members = membership.get("membership", [])
 status_counts = Counter(member.get("status", "UNKNOWN") for member in members)
+member_addresses = {
+    member.get("nodeId"): (member.get("address") or "").replace("http://", "").replace("https://", "")
+    for member in members
+}
 
 def sample_indices(total: int, sample: int):
     sample = min(sample, total)
@@ -109,7 +155,7 @@ def sample_indices(total: int, sample: int):
         seen.add(idx)
     return sorted(seen)
 
-def grpc_json(port: int, method: str, payload: dict):
+def grpc_json(target: str, method: str, payload: dict):
     command = [
         "grpcurl",
         "-plaintext",
@@ -117,20 +163,13 @@ def grpc_json(port: int, method: str, payload: dict):
         json.dumps(payload, separators=(",", ":")),
         "-proto",
         proto_file,
-        f"127.0.0.1:{port}",
+        target,
         method,
     ]
     completed = subprocess.run(command, capture_output=True, text=True)
     if completed.returncode != 0:
         return None, completed.stderr.strip() or completed.stdout.strip()
     return json.loads(completed.stdout), None
-
-def node_port(node_id: str):
-    try:
-        suffix = int(node_id.split("-")[-1])
-    except Exception:
-        return None
-    return grpc_port_base + suffix
 
 def version_tuple(result: dict):
     found = result.get("found", False)
@@ -151,13 +190,13 @@ keys_checked = 0
 quorum_failures = 0
 
 for idx in indices:
-    key = f"{key_prefix}-{idx}"
+    key = f"{key_prefix}-{start_index + idx - 1}"
     coordinator_routes = {}
     coordinator_responses = {}
 
     for port in coordinator_ports:
         response, error = grpc_json(
-            int(port),
+            f"{coordinator_host}:{int(port)}",
             "orionkv.node.CoordinationRpc/Get",
             {"requestId": f"{request_prefix}-{port}-{idx}", "key": key},
         )
@@ -196,13 +235,13 @@ for idx in indices:
 
     versions = {}
     for replica in baseline_route:
-        port = node_port(replica)
-        if port is None:
-            per_key_missing[key].append({"replica": replica, "reason": "unparseable node id"})
+        target = member_addresses.get(replica, "")
+        if not target:
+            per_key_missing[key].append({"replica": replica, "reason": "missing member address"})
             continue
 
         replica_response, error = grpc_json(
-            port,
+            target,
             "orionkv.node.ReplicaDataRpc/GetReplica",
             {"requestId": f"{request_prefix}-replica-{idx}", "key": key},
         )
