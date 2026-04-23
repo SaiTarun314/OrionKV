@@ -9,6 +9,7 @@ HTTP_PORT_BASE="${HTTP_PORT_BASE:-18080}"
 GRPC_PORT_BASE="${GRPC_PORT_BASE:-19090}"
 SERVER_PORT="${SERVER_PORT:-8080}"
 INTERNAL_GRPC_PORT="${INTERNAL_GRPC_PORT:-9090}"
+NETWORK_MODE="${NETWORK_MODE:-host}"
 HOST_IP="${HOST_IP:-127.0.0.1}"
 IMAGE_NAME="${IMAGE_NAME:-orionkv:local}"
 OUTPUT_FILE="${OUTPUT_FILE:-docker-compose.generated.yml}"
@@ -49,9 +50,16 @@ EOF
 for i in $(seq 1 "$NODE_COUNT"); do
   http_port=$((HTTP_PORT_BASE + i))
   grpc_port=$((GRPC_PORT_BASE + i))
+  server_port="$SERVER_PORT"
+  bind_port="$INTERNAL_GRPC_PORT"
   seed_args=""
   if (( i > 1 )); then
     seed_args=" --node.seed-address=${HOST_IP}:$((GRPC_PORT_BASE + 1))"
+  fi
+
+  if [[ "$NETWORK_MODE" == "host" ]]; then
+    server_port="$http_port"
+    bind_port="$grpc_port"
   fi
 
   cat >> "$OUTPUT_FILE" <<EOF
@@ -62,13 +70,22 @@ for i in $(seq 1 "$NODE_COUNT"); do
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.75
+EOF
+
+  if [[ "$NETWORK_MODE" == "host" ]]; then
+    cat >> "$OUTPUT_FILE" <<EOF
+    network_mode: host
+EOF
+  fi
+
+  cat >> "$OUTPUT_FILE" <<EOF
     environment:
       JAVA_OPTS: "${JAVA_OPTS}"
       APP_ARGS: >-
-        --server.port=${SERVER_PORT}
+        --server.port=${server_port}
         --node.node-id=node-$i
         --node.address=${HOST_IP}:${grpc_port}
-        --node.bind-port=${INTERNAL_GRPC_PORT}
+        --node.bind-port=${bind_port}
         --node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}
         ${seed_args}
         --node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}
@@ -83,10 +100,15 @@ for i in $(seq 1 "$NODE_COUNT"); do
         --dataplane.storage.log-path=/app/data/node-${i}.wal.log
     volumes:
       - ./docker-data/node-$i:/app/data
+EOF
+
+  if [[ "$NETWORK_MODE" != "host" ]]; then
+    cat >> "$OUTPUT_FILE" <<EOF
     ports:
       - "${http_port}:${SERVER_PORT}"
       - "${grpc_port}:${INTERNAL_GRPC_PORT}"
 EOF
+  fi
 done
 
 cat >> "$OUTPUT_FILE" <<EOF
@@ -99,6 +121,7 @@ Generated ${OUTPUT_FILE}
 
 Image: ${IMAGE_NAME}
 Nodes: ${NODE_COUNT}
+Network mode: ${NETWORK_MODE}
 Host IP: ${HOST_IP}
 Client router: ${CLIENT_ROUTER_BASE_URL}
 Host port ranges:
