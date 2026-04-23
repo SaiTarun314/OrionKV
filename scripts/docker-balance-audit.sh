@@ -55,21 +55,9 @@ if ! [[ "$NODE_ID_OFFSET" =~ ^[0-9]+$ ]]; then
 fi
 
 if [[ -z "$COORDINATOR_PORTS" ]]; then
-  declare -A seen_ports=()
   computed_ports=()
-  sample_positions=(1 $(( (NODE_COUNT + 2) / 3 )) $(( (2 * NODE_COUNT + 2) / 3 )) "$NODE_COUNT")
-  for position in "${sample_positions[@]}"; do
-    if (( position < 1 )); then
-      position=1
-    fi
-    if (( position > NODE_COUNT )); then
-      position=$NODE_COUNT
-    fi
-    port=$((GRPC_PORT_BASE + NODE_ID_OFFSET + position))
-    if [[ -z "${seen_ports[$port]:-}" ]]; then
-      computed_ports+=("$port")
-      seen_ports[$port]=1
-    fi
+  for position in $(seq 1 "$NODE_COUNT"); do
+    computed_ports+=("$((GRPC_PORT_BASE + NODE_ID_OFFSET + position))")
   done
   COORDINATOR_PORTS="${computed_ports[*]}"
 fi
