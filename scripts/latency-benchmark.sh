@@ -30,7 +30,9 @@ REPLICATION_QUORUM_POLICY="${REPLICATION_QUORUM_POLICY:-majority}"
 SAMPLES="${SAMPLES:-1000}"
 WARMUP_SAMPLES="${WARMUP_SAMPLES:-50}"
 PRELOAD_KEYS="${PRELOAD_KEYS:-10000}"
-PRELOAD_CONCURRENCY="${PRELOAD_CONCURRENCY:-32}"
+PRELOAD_CONCURRENCY="${PRELOAD_CONCURRENCY:-16}"
+PRELOAD_RETRIES="${PRELOAD_RETRIES:-5}"
+PRELOAD_RETRY_DELAY_MS="${PRELOAD_RETRY_DELAY_MS:-200}"
 VALUE_SIZE_BYTES="${VALUE_SIZE_BYTES:-128}"
 RESULTS_DIR="${RESULTS_DIR:-results}"
 RESULTS_BASENAME="${RESULTS_BASENAME:-latency-benchmark-$(date +%Y%m%d-%H%M%S)}"
@@ -141,6 +143,16 @@ if ! [[ "$PRELOAD_CONCURRENCY" =~ ^[0-9]+$ ]] || (( PRELOAD_CONCURRENCY < 1 )); 
   exit 1
 fi
 
+if ! [[ "$PRELOAD_RETRIES" =~ ^[0-9]+$ ]] || (( PRELOAD_RETRIES < 1 )); then
+  echo "PRELOAD_RETRIES must be a positive integer" >&2
+  exit 1
+fi
+
+if ! [[ "$PRELOAD_RETRY_DELAY_MS" =~ ^[0-9]+$ ]] || (( PRELOAD_RETRY_DELAY_MS < 0 )); then
+  echo "PRELOAD_RETRY_DELAY_MS must be a non-negative integer" >&2
+  exit 1
+fi
+
 if ! [[ "$VALUE_SIZE_BYTES" =~ ^[0-9]+$ ]] || (( VALUE_SIZE_BYTES < 1 )); then
   echo "VALUE_SIZE_BYTES must be a positive integer" >&2
   exit 1
@@ -199,52 +211,15 @@ preload_current_cluster() {
 
   local preload_prefix="preload-${mode_name}-${setting//:/-}"
   echo "==> Preloading ${PRELOAD_KEYS} keys with concurrency=${PRELOAD_CONCURRENCY} for setting=${setting}"
-
-  PRELOAD_KEYS="$PRELOAD_KEYS" \
-  PRELOAD_CONCURRENCY="$PRELOAD_CONCURRENCY" \
-  CLIENT_BASE_URL="$CLIENT_BASE_URL" \
-  VALUE_PAYLOAD="$VALUE_PAYLOAD" \
-  PRELOAD_PREFIX="$preload_prefix" \
-  python3 - <<'PY'
-import concurrent.futures
-import json
-import os
-import subprocess
-import time
-
-total = int(os.environ["PRELOAD_KEYS"])
-concurrency = int(os.environ["PRELOAD_CONCURRENCY"])
-base_url = os.environ["CLIENT_BASE_URL"].rstrip("/")
-value = os.environ["VALUE_PAYLOAD"]
-prefix = os.environ["PRELOAD_PREFIX"]
-
-def put_one(i: int) -> None:
-    key = f"{prefix}-{i}"
-    body = json.dumps({
-        "value": value,
-        "timestamp": int(time.time() * 1000) + i,
-    })
-    result = subprocess.run(
-        [
-            "curl", "-fsS", "-X", "PUT",
-            "-H", "Content-Type: application/json",
-            "-d", body,
-            f"{base_url}/client/kv/{key}",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"curl failed for key {key}")
-
-with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-    futures = [executor.submit(put_one, i) for i in range(1, total + 1)]
-    for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
-        future.result()
-        if index % 1000 == 0 or index == total:
-            print(f"preloaded={index}/{total}", flush=True)
-PY
+  TOTAL_KEYS="$PRELOAD_KEYS" \
+  CONCURRENCY="$PRELOAD_CONCURRENCY" \
+  START_INDEX=1 \
+  KEY_PREFIX="$preload_prefix" \
+  VALUE_SIZE_BYTES="$VALUE_SIZE_BYTES" \
+  CLIENT_ROUTER_BASE_URL="$CLIENT_BASE_URL" \
+  RETRIES="$PRELOAD_RETRIES" \
+  RETRY_DELAY_MS="$PRELOAD_RETRY_DELAY_MS" \
+  bash ./scripts/fair-cluster-load.sh
 }
 
 wait_for_client_router_count() {
