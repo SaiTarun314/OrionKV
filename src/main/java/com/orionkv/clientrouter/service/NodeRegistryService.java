@@ -142,6 +142,24 @@ public class NodeRegistryService {
         return nodesById.values().stream().anyMatch(RouterNodeRecord::isAlive);
     }
 
+    public synchronized void resetLocalState(boolean deletePersistedRegistry) {
+        nodesById.clear();
+        topologyVersion = 0L;
+        updatedAt = Instant.now(clock);
+
+        Path path = registryPath();
+        if (deletePersistedRegistry) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException ex) {
+                throw new IllegalStateException("Could not delete client router registry at " + path, ex);
+            }
+            return;
+        }
+
+        persist();
+    }
+
     private List<RouterNodeRecord> orderedNodes() {
         return nodesById.values().stream()
                 .sorted(Comparator.comparing(RouterNodeRecord::nodeId))
