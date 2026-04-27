@@ -18,24 +18,37 @@ REBUILD_IMAGE="${REBUILD_IMAGE:-true}"
 WIPE_DATA="${WIPE_DATA:-true}"
 HOST_IP="${HOST_IP:-127.0.0.1}"
 SEED_HOST_IP="${SEED_HOST_IP:-$HOST_IP}"
+SUDO_DOCKER="${SUDO_DOCKER:-false}"
+
+run_docker() {
+  if [[ "$SUDO_DOCKER" == "true" ]] && command -v sudo >/dev/null 2>&1; then
+    sudo docker "$@"
+    return
+  fi
+  docker "$@"
+}
 
 compose_cmd() {
-  if docker compose version >/dev/null 2>&1; then
-    docker compose "$@"
+  if run_docker compose version >/dev/null 2>&1; then
+    run_docker compose "$@"
     return
   fi
   if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose "$@"
+    if [[ "$SUDO_DOCKER" == "true" ]] && command -v sudo >/dev/null 2>&1; then
+      sudo docker-compose "$@"
+    else
+      docker-compose "$@"
+    fi
     return
   fi
   echo "Neither 'docker compose' nor 'docker-compose' is available" >&2
   exit 1
 }
 
-WIPE_DATA="$WIPE_DATA" WIPE_IMAGE="false" ./scripts/docker-cluster-reset.sh
+WIPE_DATA="$WIPE_DATA" WIPE_IMAGE="false" SUDO_DOCKER="$SUDO_DOCKER" ./scripts/docker-cluster-reset.sh
 
 if [[ "$REBUILD_IMAGE" == "true" ]]; then
-  docker build -t "$IMAGE_NAME" .
+  run_docker build -t "$IMAGE_NAME" .
 fi
 
 NODE_COUNT="$NODE_COUNT" \
