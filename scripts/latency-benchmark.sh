@@ -27,8 +27,10 @@ READ_QUORUM="${READ_QUORUM:-2}"
 QUORUM_CONFIGS="${QUORUM_CONFIGS:-1:1,2:2,3:3}"
 REPLICATION_FACTORS="${REPLICATION_FACTORS:-2,3,4,5}"
 REPLICATION_QUORUM_POLICY="${REPLICATION_QUORUM_POLICY:-majority}"
-SAMPLES="${SAMPLES:-30}"
-WARMUP_SAMPLES="${WARMUP_SAMPLES:-5}"
+SAMPLES="${SAMPLES:-1000}"
+WARMUP_SAMPLES="${WARMUP_SAMPLES:-50}"
+PRELOAD_KEYS="${PRELOAD_KEYS:-10000}"
+PRELOAD_CONCURRENCY="${PRELOAD_CONCURRENCY:-32}"
 VALUE_SIZE_BYTES="${VALUE_SIZE_BYTES:-128}"
 RESULTS_DIR="${RESULTS_DIR:-results}"
 RESULTS_BASENAME="${RESULTS_BASENAME:-latency-benchmark-$(date +%Y%m%d-%H%M%S)}"
@@ -36,6 +38,7 @@ REBUILD_IMAGE="${REBUILD_IMAGE:-true}"
 
 RAW_RESULTS_FILE="${RESULTS_DIR}/${RESULTS_BASENAME}.csv"
 SUMMARY_RESULTS_FILE="${RESULTS_DIR}/${RESULTS_BASENAME}-summary.csv"
+REPORT_HTML_FILE="${RESULTS_DIR}/${RESULTS_BASENAME}.html"
 
 if [[ -z "$CLIENT_REFRESH_SEED_GRPC_ADDRESS" ]]; then
   CLIENT_REFRESH_SEED_GRPC_ADDRESS="${HOST_IP}:$((19090 + NODE_ID_OFFSET + 1))"
@@ -69,6 +72,8 @@ Examples:
   SUDO_DOCKER=true \
   CLIENT_BASE_URL=http://152.7.177.154:8090 \
   QUORUM_CONFIGS=1:1,2:2,3:3 \
+  PRELOAD_KEYS=10000 \
+  SAMPLES=1000 \
   ./scripts/latency-benchmark.sh
 
   MODE=replication \
@@ -77,6 +82,8 @@ Examples:
   SUDO_DOCKER=true \
   CLIENT_BASE_URL=http://152.7.177.154:8090 \
   REPLICATION_FACTORS=2,3,4,5 \
+  PRELOAD_KEYS=10000 \
+  SAMPLES=1000 \
   ./scripts/latency-benchmark.sh
 EOF
 }
@@ -121,6 +128,16 @@ fi
 
 if ! [[ "$WARMUP_SAMPLES" =~ ^[0-9]+$ ]]; then
   echo "WARMUP_SAMPLES must be a non-negative integer" >&2
+  exit 1
+fi
+
+if ! [[ "$PRELOAD_KEYS" =~ ^[0-9]+$ ]]; then
+  echo "PRELOAD_KEYS must be a non-negative integer" >&2
+  exit 1
+fi
+
+if ! [[ "$PRELOAD_CONCURRENCY" =~ ^[0-9]+$ ]] || (( PRELOAD_CONCURRENCY < 1 )); then
+  echo "PRELOAD_CONCURRENCY must be a positive integer" >&2
   exit 1
 fi
 
@@ -171,6 +188,65 @@ refresh_client_router() {
     -d "{\"seedGrpcAddress\":\"${CLIENT_REFRESH_SEED_GRPC_ADDRESS}\"}" >/dev/null
 }
 
+preload_current_cluster() {
+  local mode_name="$1"
+  local setting="$2"
+
+  if (( PRELOAD_KEYS == 0 )); then
+    echo "==> Skipping preload because PRELOAD_KEYS=0"
+    return
+  fi
+
+  local preload_prefix="preload-${mode_name}-${setting//:/-}"
+  echo "==> Preloading ${PRELOAD_KEYS} keys with concurrency=${PRELOAD_CONCURRENCY} for setting=${setting}"
+
+  PRELOAD_KEYS="$PRELOAD_KEYS" \
+  PRELOAD_CONCURRENCY="$PRELOAD_CONCURRENCY" \
+  CLIENT_BASE_URL="$CLIENT_BASE_URL" \
+  VALUE_PAYLOAD="$VALUE_PAYLOAD" \
+  PRELOAD_PREFIX="$preload_prefix" \
+  python3 - <<'PY'
+import concurrent.futures
+import json
+import os
+import subprocess
+import time
+
+total = int(os.environ["PRELOAD_KEYS"])
+concurrency = int(os.environ["PRELOAD_CONCURRENCY"])
+base_url = os.environ["CLIENT_BASE_URL"].rstrip("/")
+value = os.environ["VALUE_PAYLOAD"]
+prefix = os.environ["PRELOAD_PREFIX"]
+
+def put_one(i: int) -> None:
+    key = f"{prefix}-{i}"
+    body = json.dumps({
+        "value": value,
+        "timestamp": int(time.time() * 1000) + i,
+    })
+    result = subprocess.run(
+        [
+            "curl", "-fsS", "-X", "PUT",
+            "-H", "Content-Type: application/json",
+            "-d", body,
+            f"{base_url}/client/kv/{key}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"curl failed for key {key}")
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+    futures = [executor.submit(put_one, i) for i in range(1, total + 1)]
+    for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
+        future.result()
+        if index % 1000 == 0 or index == total:
+            print(f"preloaded={index}/{total}", flush=True)
+PY
+}
+
 wait_for_client_router_count() {
   local expected_count="$1"
   local timeout_seconds="${2:-60}"
@@ -180,7 +256,7 @@ wait_for_client_router_count() {
     local payload
     if payload="$(curl -fsS "${CLIENT_BASE_URL}/client/nodes" 2>/dev/null)"; then
       local alive_count
-      alive_count="$(python3 - <<'PY' <<<"$payload"
+      alive_count="$(python3 -c '
 import json
 import sys
 
@@ -188,8 +264,7 @@ data = json.load(sys.stdin)
 nodes = data.get("nodes", [])
 alive = sum(1 for node in nodes if node.get("status") == "ALIVE")
 print(alive)
-PY
-)"
+' <<<"$payload")"
       if [[ "$alive_count" == "$expected_count" ]]; then
         return 0
       fi
@@ -277,8 +352,11 @@ benchmark_current_cluster() {
   local key_prefix="bench-${mode_name}-${setting//:/-}-$(date +%s)"
   local total_iterations=$(( WARMUP_SAMPLES + SAMPLES ))
   local i
+  local setting_metrics_file
+  setting_metrics_file="$(mktemp)"
 
   echo "==> Running warmup=${WARMUP_SAMPLES}, samples=${SAMPLES} for setting=${setting}"
+  echo "operation,sample_index,latency_ms,http_status" >"$setting_metrics_file"
 
   for i in $(seq 1 "$total_iterations"); do
     local key="${key_prefix}-${i}"
@@ -302,8 +380,56 @@ PY
       local sample_index=$(( i - WARMUP_SAMPLES ))
       record_sample "$mode_name" "$setting" "$replication_factor" "$write_quorum" "$read_quorum" "put" "$sample_index" "$put_latency_ms" "$put_status"
       record_sample "$mode_name" "$setting" "$replication_factor" "$write_quorum" "$read_quorum" "get" "$sample_index" "$get_latency_ms" "$get_status"
+      echo "put,${sample_index},${put_latency_ms},${put_status}" >>"$setting_metrics_file"
+      echo "get,${sample_index},${get_latency_ms},${get_status}" >>"$setting_metrics_file"
+
+      if (( sample_index % 100 == 0 || sample_index == SAMPLES )); then
+        echo "==> Progress setting=${setting}: completed ${sample_index}/${SAMPLES} measured samples"
+      fi
     fi
   done
+
+  echo "==> Completed benchmark for setting=${setting}"
+  python3 - "$setting_metrics_file" "$setting" <<'PY'
+import csv
+import math
+import sys
+from collections import defaultdict
+
+metrics_path, setting = sys.argv[1], sys.argv[2]
+values = defaultdict(list)
+statuses = defaultdict(list)
+
+with open(metrics_path, newline="") as handle:
+    reader = csv.DictReader(handle)
+    for row in reader:
+        op = row["operation"]
+        values[op].append(float(row["latency_ms"]))
+        statuses[op].append(row["http_status"])
+
+def percentile(series, pct):
+    if not series:
+        return 0.0
+    ordered = sorted(series)
+    index = max(0, min(len(ordered) - 1, math.ceil((pct / 100.0) * len(ordered)) - 1))
+    return ordered[index]
+
+print(f"==> Setting summary: {setting}")
+for op in ("put", "get"):
+    series = values.get(op, [])
+    if not series:
+        continue
+    avg = sum(series) / len(series)
+    p50 = percentile(series, 50)
+    p95 = percentile(series, 95)
+    p99 = percentile(series, 99)
+    distinct_statuses = ",".join(sorted(set(statuses.get(op, []))))
+    print(
+        f"    {op.upper()}: samples={len(series)} avg={avg:.3f}ms p50={p50:.3f}ms "
+        f"p95={p95:.3f}ms p99={p99:.3f}ms http_statuses={distinct_statuses}"
+    )
+PY
+  rm -f "$setting_metrics_file"
 }
 
 majority_quorum() {
@@ -333,6 +459,7 @@ run_quorum_mode() {
 
     client_restart
     restart_cluster "$REPLICATION_FACTOR" "$write_quorum" "$read_quorum"
+    preload_current_cluster "quorum" "W${write_quorum}-R${read_quorum}"
     benchmark_current_cluster "quorum" "W${write_quorum}-R${read_quorum}" "$REPLICATION_FACTOR" "$write_quorum" "$read_quorum"
   done
 }
@@ -360,6 +487,7 @@ run_replication_mode() {
 
     client_restart
     restart_cluster "$factor" "$write_quorum" "$read_quorum"
+    preload_current_cluster "replication" "N${factor}"
     benchmark_current_cluster "replication" "N${factor}" "$factor" "$write_quorum" "$read_quorum"
   done
 }
@@ -414,6 +542,10 @@ with open(summary_path, "w", newline="") as handle:
 PY
 }
 
+write_html_report() {
+  python3 scripts/plot-latency-benchmark.py "$SUMMARY_RESULTS_FILE" "$REPORT_HTML_FILE"
+}
+
 if [[ "$MODE" == "quorum" ]]; then
   run_quorum_mode
 else
@@ -421,6 +553,8 @@ else
 fi
 
 write_summary_csv
+write_html_report
 
 echo "==> Raw results written to ${RAW_RESULTS_FILE}"
 echo "==> Summary results written to ${SUMMARY_RESULTS_FILE}"
+echo "==> HTML report written to ${REPORT_HTML_FILE}"
