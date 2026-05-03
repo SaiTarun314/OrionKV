@@ -4,17 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
-TOTAL_KEYS="${TOTAL_KEYS:-10000}"
+TOTAL_KEYS="${TOTAL_KEYS:-50000}"
 CONCURRENCY="${CONCURRENCY:-64}"
 START_INDEX="${START_INDEX:-1}"
 KEY_PREFIX="${KEY_PREFIX:-bulk-key}"
 VALUE_PREFIX="${VALUE_PREFIX:-bulk-value}"
 TIMESTAMP_BASE="${TIMESTAMP_BASE:-1710000000000}"
 PROTO_FILE="${PROTO_FILE:-src/main/proto/coordination.proto}"
-NODE_COUNT="${NODE_COUNT:-25}"
-NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
-GRPC_PORT_BASE="${GRPC_PORT_BASE:-19090}"
-PORTS="${PORTS:-}"
+PORTS="${PORTS:-19091}"
 
 if ! [[ "$TOTAL_KEYS" =~ ^[0-9]+$ ]] || (( TOTAL_KEYS < 1 )); then
   echo "TOTAL_KEYS must be a positive integer"
@@ -29,24 +26,6 @@ fi
 if ! [[ "$START_INDEX" =~ ^[0-9]+$ ]] || (( START_INDEX < 1 )); then
   echo "START_INDEX must be a positive integer"
   exit 1
-fi
-
-if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || (( NODE_COUNT < 1 )); then
-  echo "NODE_COUNT must be a positive integer"
-  exit 1
-fi
-
-if ! [[ "$NODE_ID_OFFSET" =~ ^[0-9]+$ ]]; then
-  echo "NODE_ID_OFFSET must be a non-negative integer"
-  exit 1
-fi
-
-if [[ -z "$PORTS" ]]; then
-  computed_ports=()
-  for position in $(seq 1 "$NODE_COUNT"); do
-    computed_ports+=("$((GRPC_PORT_BASE + NODE_ID_OFFSET + position))")
-  done
-  PORTS="${computed_ports[*]}"
 fi
 
 read -r -a PORT_ARRAY <<< "$PORTS"

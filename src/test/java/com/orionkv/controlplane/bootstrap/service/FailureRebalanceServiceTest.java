@@ -194,7 +194,6 @@ class FailureRebalanceServiceTest {
     ) {
         RebalanceService rebalanceService = new RebalanceService();
         List<MemberRecord> snapshot = membershipService.getMembershipSnapshot().stream().toList();
-        MemberRecord replicaMovementFallback = null;
 
         for (MemberRecord candidate : snapshot) {
             if (candidate.nodeId().equals(nodeProperties.getNodeId())) {
@@ -236,18 +235,9 @@ class FailureRebalanceServiceTest {
                 hashRingService.rebuildRing(snapshot);
                 return candidate;
             }
-
-            if (hasReplicaMovement && replicaMovementFallback == null) {
-                replicaMovementFallback = candidate;
-            }
         }
 
-        if (replicaMovementFallback != null) {
-            hashRingService.rebuildRing(snapshot);
-            return replicaMovementFallback;
-        }
-
-        throw new AssertionError("Expected at least one dead node to add replica ranges");
+        throw new AssertionError("Expected at least one dead node to add replica ranges without primary ownership change");
     }
 
     private MemberRecord member(String nodeId, MemberStatus status, String address) {
