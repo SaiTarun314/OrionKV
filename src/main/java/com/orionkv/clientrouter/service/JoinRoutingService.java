@@ -33,10 +33,16 @@ public class JoinRoutingService {
             return new JoinSeedResponse(true, self.nodeId(), self.grpcAddress(), 1, snapshot.topologyVersion());
         }
 
-        RouterNodeRecord seed = nodeRegistryService.aliveNodes().stream()
+        java.util.List<RouterNodeRecord> candidates = nodeRegistryService.aliveNodes().stream()
                 .filter(node -> !node.nodeId().equals(request.getNodeId()))
-                .findFirst()
-                .orElse(self);
+                .toList();
+        RouterNodeRecord seed;
+        if (candidates.isEmpty()) {
+            seed = self;
+        } else {
+            int index = Math.floorMod(request.getNodeId().hashCode(), candidates.size());
+            seed = candidates.get(index);
+        }
         return new JoinSeedResponse(false, seed.nodeId(), seed.grpcAddress(),
                 nodeRegistryService.aliveNodes().size(), snapshot.topologyVersion());
     }
