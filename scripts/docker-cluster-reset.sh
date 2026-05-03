@@ -9,14 +9,27 @@ WIPE_DATA="${WIPE_DATA:-true}"
 WIPE_IMAGE="${WIPE_IMAGE:-false}"
 IMAGE_NAME="${IMAGE_NAME:-orionkv:local}"
 WIPE_LOCAL_STATE="${WIPE_LOCAL_STATE:-false}"
+SUDO_DOCKER="${SUDO_DOCKER:-false}"
+
+run_docker() {
+  if [[ "$SUDO_DOCKER" == "true" ]] && command -v sudo >/dev/null 2>&1; then
+    sudo docker "$@"
+    return
+  fi
+  docker "$@"
+}
 
 compose_cmd() {
-  if docker compose version >/dev/null 2>&1; then
-    docker compose "$@"
+  if run_docker compose version >/dev/null 2>&1; then
+    run_docker compose "$@"
     return
   fi
   if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose "$@"
+    if [[ "$SUDO_DOCKER" == "true" ]] && command -v sudo >/dev/null 2>&1; then
+      sudo docker-compose "$@"
+    else
+      docker-compose "$@"
+    fi
     return
   fi
   echo "Neither 'docker compose' nor 'docker-compose' is available" >&2
@@ -55,7 +68,7 @@ if [[ "$WIPE_LOCAL_STATE" == "true" ]]; then
 fi
 
 if [[ "$WIPE_IMAGE" == "true" ]]; then
-  docker image rm -f "$IMAGE_NAME" >/dev/null 2>&1 || true
+  run_docker image rm -f "$IMAGE_NAME" >/dev/null 2>&1 || true
   echo "Removed image $IMAGE_NAME"
 fi
 
