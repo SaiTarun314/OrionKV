@@ -27,12 +27,13 @@ READ_QUORUM="${READ_QUORUM:-2}"
 QUORUM_CONFIGS="${QUORUM_CONFIGS:-1:1,2:2,3:3}"
 REPLICATION_FACTORS="${REPLICATION_FACTORS:-2,3,4,5}"
 REPLICATION_QUORUM_POLICY="${REPLICATION_QUORUM_POLICY:-majority}"
-SAMPLES="${SAMPLES:-1000}"
-WARMUP_SAMPLES="${WARMUP_SAMPLES:-50}"
+SAMPLES="${SAMPLES:-300}"
+WARMUP_SAMPLES="${WARMUP_SAMPLES:-20}"
 PRELOAD_KEYS="${PRELOAD_KEYS:-10000}"
 PRELOAD_CONCURRENCY="${PRELOAD_CONCURRENCY:-16}"
 PRELOAD_RETRIES="${PRELOAD_RETRIES:-5}"
 PRELOAD_RETRY_DELAY_MS="${PRELOAD_RETRY_DELAY_MS:-200}"
+CLIENT_REFRESH_RETRY_INTERVAL_SECONDS="${CLIENT_REFRESH_RETRY_INTERVAL_SECONDS:-10}"
 VALUE_SIZE_BYTES="${VALUE_SIZE_BYTES:-128}"
 RESULTS_DIR="${RESULTS_DIR:-results}"
 RESULTS_BASENAME="${RESULTS_BASENAME:-latency-benchmark-$(date +%Y%m%d-%H%M%S)}"
@@ -153,6 +154,11 @@ if ! [[ "$PRELOAD_RETRY_DELAY_MS" =~ ^[0-9]+$ ]] || (( PRELOAD_RETRY_DELAY_MS < 
   exit 1
 fi
 
+if ! [[ "$CLIENT_REFRESH_RETRY_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( CLIENT_REFRESH_RETRY_INTERVAL_SECONDS < 1 )); then
+  echo "CLIENT_REFRESH_RETRY_INTERVAL_SECONDS must be a positive integer" >&2
+  exit 1
+fi
+
 if ! [[ "$VALUE_SIZE_BYTES" =~ ^[0-9]+$ ]] || (( VALUE_SIZE_BYTES < 1 )); then
   echo "VALUE_SIZE_BYTES must be a positive integer" >&2
   exit 1
@@ -226,20 +232,43 @@ wait_for_client_router_count() {
   local expected_count="$1"
   local timeout_seconds="${2:-60}"
   local deadline=$(( $(date +%s) + timeout_seconds ))
+  local last_alive_count="-1"
+  local last_refresh_epoch=0
 
   while (( $(date +%s) < deadline )); do
+    local now_epoch
+    now_epoch="$(date +%s)"
+    if (( now_epoch - last_refresh_epoch >= CLIENT_REFRESH_RETRY_INTERVAL_SECONDS )); then
+      refresh_client_router || true
+      last_refresh_epoch="$now_epoch"
+    fi
+
     local payload
     if payload="$(curl -fsS "${CLIENT_BASE_URL}/client/nodes" 2>/dev/null)"; then
-      local alive_count
-      alive_count="$(python3 -c '
+      local status_summary
+      status_summary="$(python3 -c '
 import json
 import sys
 
 data = json.load(sys.stdin)
 nodes = data.get("nodes", [])
 alive = sum(1 for node in nodes if node.get("status") == "ALIVE")
-print(alive)
-' <<<"$payload")"
+alive_ids = {node.get("nodeId") for node in nodes if node.get("status") == "ALIVE" and node.get("nodeId")}
+expected = int(sys.argv[1])
+expected_ids = [f"node-{i}" for i in range(1, expected + 1)]
+missing = [node_id for node_id in expected_ids if node_id not in alive_ids]
+print(str(alive) + "|" + ",".join(missing))
+' "$expected_count" <<<"$payload")"
+      local alive_count="${status_summary%%|*}"
+      local missing_nodes="${status_summary#*|}"
+      if [[ "$alive_count" != "$last_alive_count" ]]; then
+        if [[ -n "$missing_nodes" ]]; then
+          echo "==> Client-router sees ${alive_count}/${expected_count} alive nodes; missing=${missing_nodes}"
+        else
+          echo "==> Client-router sees ${alive_count}/${expected_count} alive nodes"
+        fi
+        last_alive_count="$alive_count"
+      fi
       if [[ "$alive_count" == "$expected_count" ]]; then
         return 0
       fi
@@ -273,7 +302,7 @@ restart_cluster() {
   refresh_client_router
 
   echo "==> Waiting for client-router to see ${NODE_COUNT} alive nodes"
-  if ! wait_for_client_router_count "$NODE_COUNT" 120; then
+  if ! wait_for_client_router_count "$NODE_COUNT" 180; then
     echo "client-router did not observe ${NODE_COUNT} alive nodes in time" >&2
     curl -fsS "${CLIENT_BASE_URL}/client/nodes" || true
     exit 1
@@ -476,10 +505,28 @@ from collections import defaultdict
 
 raw_path, summary_path = sys.argv[1], sys.argv[2]
 groups = defaultdict(list)
+required_fields = [
+    "mode",
+    "setting",
+    "replication_factor",
+    "write_quorum",
+    "read_quorum",
+    "operation",
+    "latency_ms",
+]
 
 with open(raw_path, newline="") as handle:
     reader = csv.DictReader(handle)
+    missing_fields = [field for field in required_fields if field not in (reader.fieldnames or [])]
+    if missing_fields:
+        raise SystemExit(
+            f"Invalid raw results header in {raw_path}. "
+            f"Missing fields: {', '.join(missing_fields)}. "
+            f"Found: {reader.fieldnames}"
+        )
     for row in reader:
+        if not row or not row.get("mode"):
+            continue
         key = (
             row["mode"],
             row["setting"],

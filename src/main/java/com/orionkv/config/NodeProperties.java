@@ -15,7 +15,7 @@ public class NodeProperties {
     private long failureDetectionIntervalMs = 2000;
     private long suspectTimeoutMs = 10000;
     private long deadTimeoutMs = 30000;
-    private int virtualNodeCount = 32;
+    private int virtualNodeCount = 512;
     private int replicationFactor = 3;
     private int writeQuorum = 2;
     private int readQuorum = 2;
