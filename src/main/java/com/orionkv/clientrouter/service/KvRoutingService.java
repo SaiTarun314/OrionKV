@@ -9,8 +9,11 @@ import io.grpc.StatusRuntimeException;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
 
 @Service
@@ -44,8 +47,11 @@ public class KvRoutingService {
             throw new IllegalStateException("No alive OrionKV nodes available in the client router table");
         }
 
+        List<RouterNodeRecord> candidateNodes = new ArrayList<>(aliveNodes);
+        Collections.shuffle(candidateNodes, ThreadLocalRandom.current());
+
         RuntimeException lastFailure = null;
-        for (RouterNodeRecord node : aliveNodes) {
+        for (RouterNodeRecord node : candidateNodes) {
             try {
                 T response = request.apply(node);
                 return new RoutedRequestResult<>(node.nodeId(), node.grpcAddress(), response);

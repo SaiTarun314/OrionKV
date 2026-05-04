@@ -1,6 +1,8 @@
 package com.orionkv.dataplane.controller;
 
 import com.orionkv.coordinationplane.service.ClusterSummaryService;
+import com.orionkv.controlplane.bootstrap.model.RebalanceTimingSnapshot;
+import com.orionkv.controlplane.bootstrap.service.RebalanceMetricsRegistry;
 import com.orionkv.dataplane.dto.ClusterSummaryResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,5 +24,11 @@ public class InternalClusterController {
     @ResponseStatus(HttpStatus.OK)
     public ClusterSummaryResponse getSummary() {
         return clusterSummaryService.buildSummary();
+    }
+
+    @GetMapping("/rebalance/latest")
+    @ResponseStatus(HttpStatus.OK)
+    public RebalanceTimingSnapshot latestRebalanceTiming() {
+        return RebalanceMetricsRegistry.latest();
     }
 }

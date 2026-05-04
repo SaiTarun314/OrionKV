@@ -5,14 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
 NODE_COUNT="${NODE_COUNT:-100}"
-NODE_ID_OFFSET="${NODE_ID_OFFSET:-0}"
 HTTP_PORT_BASE="${HTTP_PORT_BASE:-18080}"
 GRPC_PORT_BASE="${GRPC_PORT_BASE:-19090}"
 SERVER_PORT="${SERVER_PORT:-8080}"
 INTERNAL_GRPC_PORT="${INTERNAL_GRPC_PORT:-9090}"
-NETWORK_MODE="${NETWORK_MODE:-host}"
 HOST_IP="${HOST_IP:-127.0.0.1}"
-SEED_HOST_IP="${SEED_HOST_IP:-$HOST_IP}"
 IMAGE_NAME="${IMAGE_NAME:-orionkv:local}"
 OUTPUT_FILE="${OUTPUT_FILE:-docker-compose.generated.yml}"
 
@@ -45,55 +42,33 @@ if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || (( NODE_COUNT < 1 )); then
   exit 1
 fi
 
-if ! [[ "$NODE_ID_OFFSET" =~ ^[0-9]+$ ]]; then
-  echo "NODE_ID_OFFSET must be a non-negative integer"
-  exit 1
-fi
-
 cat > "$OUTPUT_FILE" <<EOF
 services:
 EOF
 
 for i in $(seq 1 "$NODE_COUNT"); do
-  node_id=$((NODE_ID_OFFSET + i))
-  http_port=$((HTTP_PORT_BASE + node_id))
-  grpc_port=$((GRPC_PORT_BASE + node_id))
-  server_port="$SERVER_PORT"
-  bind_port="$INTERNAL_GRPC_PORT"
+  http_port=$((HTTP_PORT_BASE + i))
+  grpc_port=$((GRPC_PORT_BASE + i))
   seed_args=""
-  if (( node_id > 1 )); then
-    seed_args=" --node.seed-address=${SEED_HOST_IP}:$((GRPC_PORT_BASE + 1))"
-  fi
-
-  if [[ "$NETWORK_MODE" == "host" ]]; then
-    server_port="$http_port"
-    bind_port="$grpc_port"
+  if (( i > 1 )); then
+    seed_args=" --node.seed-address=${HOST_IP}:$((GRPC_PORT_BASE + 1))"
   fi
 
   cat >> "$OUTPUT_FILE" <<EOF
-  node-$node_id:
+  node-$i:
     image: ${IMAGE_NAME}
-    container_name: orionkv-node-$node_id
-    hostname: node-$node_id
+    container_name: orionkv-node-$i
+    hostname: node-$i
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.75
-EOF
-
-  if [[ "$NETWORK_MODE" == "host" ]]; then
-    cat >> "$OUTPUT_FILE" <<EOF
-    network_mode: host
-EOF
-  fi
-
-  cat >> "$OUTPUT_FILE" <<EOF
     environment:
       JAVA_OPTS: "${JAVA_OPTS}"
       APP_ARGS: >-
-        --server.port=${server_port}
-        --node.node-id=node-$node_id
+        --server.port=${SERVER_PORT}
+        --node.node-id=node-$i
         --node.address=${HOST_IP}:${grpc_port}
-        --node.bind-port=${bind_port}
+        --node.bind-port=${INTERNAL_GRPC_PORT}
         --node.client-router-base-url=${CLIENT_ROUTER_BASE_URL}
         ${seed_args}
         --node.gossip-interval-ms=${GOSSIP_INTERVAL_MS}
@@ -105,18 +80,13 @@ EOF
         --node.replication-factor=${REPLICATION_FACTOR}
         --node.write-quorum=${WRITE_QUORUM}
         --node.read-quorum=${READ_QUORUM}
-        --dataplane.storage.log-path=/app/data/node-${node_id}.wal.log
+        --dataplane.storage.log-path=/app/data/node-${i}.wal.log
     volumes:
-      - ./docker-data/node-$node_id:/app/data
-EOF
-
-  if [[ "$NETWORK_MODE" != "host" ]]; then
-    cat >> "$OUTPUT_FILE" <<EOF
+      - ./docker-data/node-$i:/app/data
     ports:
       - "${http_port}:${SERVER_PORT}"
       - "${grpc_port}:${INTERNAL_GRPC_PORT}"
 EOF
-  fi
 done
 
 cat >> "$OUTPUT_FILE" <<EOF
@@ -129,10 +99,7 @@ Generated ${OUTPUT_FILE}
 
 Image: ${IMAGE_NAME}
 Nodes: ${NODE_COUNT}
-Node ID offset: ${NODE_ID_OFFSET}
-Network mode: ${NETWORK_MODE}
 Host IP: ${HOST_IP}
-Seed host IP: ${SEED_HOST_IP}
 Client router: ${CLIENT_ROUTER_BASE_URL}
 Host port ranges:
   HTTP: ${HTTP_PORT_BASE}+node_id

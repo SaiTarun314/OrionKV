@@ -130,7 +130,19 @@ public class JoinService {
         bootstrapState.set(REBALANCING);
         Map<TokenRange, String> donorNodeIds = donorNodeIdsForRanges(previousMembership, currentMembership, newRanges);
         hashRingService.rebuildRing(currentMembership);
-        bootstrapTransferService.transferNewRanges(newRanges, donorNodeIds, nodeProperties.getNodeId());
+        RebalanceMetricsRegistry.RebalanceToken token = RebalanceMetricsRegistry.begin(
+                "JOIN",
+                nodeProperties.getNodeId(),
+                nodeProperties.getNodeId(),
+                newRanges.size()
+        );
+        try {
+            bootstrapTransferService.transferNewRanges(newRanges, donorNodeIds, nodeProperties.getNodeId());
+            RebalanceMetricsRegistry.complete(token);
+        } catch (RuntimeException exception) {
+            RebalanceMetricsRegistry.fail(token, exception);
+            throw exception;
+        }
         return newRanges;
     }
 

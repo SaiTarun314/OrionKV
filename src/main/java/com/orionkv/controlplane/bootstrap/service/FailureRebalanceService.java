@@ -93,7 +93,19 @@ public class FailureRebalanceService {
         Map<TokenRange, String> donorAddresses =
                 donorAddressesForRanges(previousMembership, currentMembership, newRanges, deadMember);
         hashRingService.rebuildRing(currentMembership);
-        bootstrapTransferService.transferNewRanges(newRanges, donorAddresses, nodeProperties.getNodeId());
+        RebalanceMetricsRegistry.RebalanceToken token = RebalanceMetricsRegistry.begin(
+                "FAILURE",
+                deadMember.nodeId(),
+                nodeProperties.getNodeId(),
+                newRanges.size()
+        );
+        try {
+            bootstrapTransferService.transferNewRanges(newRanges, donorAddresses, nodeProperties.getNodeId());
+            RebalanceMetricsRegistry.complete(token);
+        } catch (RuntimeException exception) {
+            RebalanceMetricsRegistry.fail(token, exception);
+            throw exception;
+        }
     }
 
     private Map<TokenRange, String> donorAddressesForRanges(

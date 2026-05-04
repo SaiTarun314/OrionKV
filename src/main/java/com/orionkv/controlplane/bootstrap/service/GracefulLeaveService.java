@@ -65,10 +65,21 @@ public class GracefulLeaveService {
             Map<String, MemberRecord> membersByNodeId = leavingMembership.stream()
                     .collect(Collectors.toMap(MemberRecord::nodeId, member -> member, (left, right) -> left));
 
-            for (TokenRange range : ownedRanges) {
-                String successorAddress = resolveSuccessorAddress(range, nodeId, membersByNodeId)
-                        .orElseThrow(() -> new IllegalStateException("No successor available for token range " + range));
-                transferRangeToSuccessor(range, successorAddress, nodeId);
+            RebalanceMetricsRegistry.RebalanceToken token = null;
+            if (!ownedRanges.isEmpty()) {
+                token = RebalanceMetricsRegistry.begin("LEAVE", nodeId, nodeId, ownedRanges.size());
+            }
+
+            try {
+                for (TokenRange range : ownedRanges) {
+                    String successorAddress = resolveSuccessorAddress(range, nodeId, membersByNodeId)
+                            .orElseThrow(() -> new IllegalStateException("No successor available for token range " + range));
+                    transferRangeToSuccessor(range, successorAddress, nodeId);
+                }
+                RebalanceMetricsRegistry.complete(token);
+            } catch (RuntimeException exception) {
+                RebalanceMetricsRegistry.fail(token, exception);
+                throw exception;
             }
 
             membershipService.markDead(nodeId);

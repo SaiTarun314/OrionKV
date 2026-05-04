@@ -33,10 +33,16 @@ public class JoinRoutingService {
             return new JoinSeedResponse(true, self.nodeId(), self.grpcAddress(), 1, snapshot.topologyVersion());
         }
 
-        RouterNodeRecord seed = nodeRegistryService.aliveNodes().stream()
+        java.util.List<RouterNodeRecord> candidates = nodeRegistryService.aliveNodes().stream()
                 .filter(node -> !node.nodeId().equals(request.getNodeId()))
-                .findFirst()
-                .orElse(self);
+                .toList();
+        RouterNodeRecord seed;
+        if (candidates.isEmpty()) {
+            seed = self;
+        } else {
+            int index = Math.floorMod(request.getNodeId().hashCode(), candidates.size());
+            seed = candidates.get(index);
+        }
         return new JoinSeedResponse(false, seed.nodeId(), seed.grpcAddress(),
                 nodeRegistryService.aliveNodes().size(), snapshot.topologyVersion());
     }
@@ -51,43 +57,24 @@ public class JoinRoutingService {
         final String attemptedSeedAddress = seedAddress;
         try {
             MembershipState membership = clusterClient.getMembership(attemptedSeedAddress);
-            if (membership == null) {
-                throw new IllegalStateException("No membership returned from " + attemptedSeedAddress);
-            }
             return nodeRegistryService.replaceFromMembership(membership);
         } catch (RuntimeException ex) {
-            RouterNodeRecord attemptedSeedNode = nodeRegistryService.aliveNodes().stream()
-                    .filter(node -> attemptedSeedAddress.equals(node.grpcAddress()))
-                    .findFirst()
-                    .orElse(null);
+            for (RouterNodeRecord node : nodeRegistryService.aliveNodes()) {
+                if (attemptedSeedAddress.equals(node.grpcAddress())) {
+                    nodeRegistryService.markNodeStatus(node.nodeId(), com.orionkv.clientrouter.model.NodeStatus.DEAD);
+                    break;
+                }
+            }
 
-            String fallbackSeed = nodeRegistryService.aliveNodes().stream()
+            String fallbackSeed = nodeRegistryService.pickAliveNode()
                     .map(RouterNodeRecord::grpcAddress)
                     .filter(address -> !address.equals(attemptedSeedAddress))
-                    .findFirst()
                     .orElse(null);
             if (fallbackSeed != null && !fallbackSeed.isBlank()) {
                 MembershipState membership = clusterClient.getMembership(fallbackSeed);
-                if (membership == null) {
-                    throw ex;
-                }
-                if (attemptedSeedNode != null) {
-                    nodeRegistryService.markNodeStatus(
-                            attemptedSeedNode.nodeId(),
-                            com.orionkv.clientrouter.model.NodeStatus.DEAD
-                    );
-                }
                 return nodeRegistryService.replaceFromMembership(membership);
             }
             throw ex;
-        }
-    }
-
-    public RouterRegistrySnapshot refreshFromClusterBestEffort(String preferredSeedGrpcAddress) {
-        try {
-            return refreshFromCluster(preferredSeedGrpcAddress);
-        } catch (RuntimeException ex) {
-            return nodeRegistryService.snapshot();
         }
     }
 
@@ -101,7 +88,7 @@ public class JoinRoutingService {
 
         RouterRegistrySnapshot lastSnapshot = null;
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
-            lastSnapshot = refreshFromClusterBestEffort(seedGrpcAddress);
+            lastSnapshot = refreshFromCluster(seedGrpcAddress);
             boolean confirmed = lastSnapshot.nodes().stream()
                     .anyMatch(node -> node.nodeId().equals(joiningNodeId) && node.isAlive());
             if (confirmed) {
