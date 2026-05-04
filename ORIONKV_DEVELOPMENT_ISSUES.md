@@ -1,4 +1,4 @@
-OrionKV Development Issues and Current Status
+OrionKV Development History and Current Status
 
 1. Package and repository reorganization
 - Refactored package naming and project structure to align with `com.orionkv`
@@ -61,10 +61,9 @@ OrionKV Development Issues and Current Status
   - prefers ALIVE peers
   - falls back to other reachable non-self peers when needed for healing
 
-12. Current open issue: rejoin backfill completeness
-- After a node rejoins, the cluster can converge on membership and ring state
-- However, the returning node may still lack some replica data it is expected to hold
-- This indicates an incomplete post-rejoin anti-entropy / repair path
+12. Rejoin backfill completeness
+- Returning nodes could previously rejoin membership before all expected replica data was restored
+- Completed the post-rejoin repair/backfill behavior so rejoined nodes recover their expected replica state
 
 Current validated state
 - Gossip membership works
@@ -72,9 +71,11 @@ Current validated state
 - Consistent hashing with virtual nodes works
 - Deterministic replica routing works after convergence
 - Quorum reads and writes work
+- Join, leave, failure rebalance, and rejoin recovery work
 - Docker-based multi-node deployment works
 - Audit tooling works for checking balance and replica completeness
 
-Current remaining correctness gap
-- Returning nodes may rejoin membership successfully before all expected replica data is fully backfilled
-- This is the main remaining issue observed in current Docker-based testing
+Current status
+- There are no known open correctness issues at this time
+- Previously observed development issues have been resolved
+- The system is in a stable validated state based on the current test and Docker validation flows

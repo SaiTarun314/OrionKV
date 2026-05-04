@@ -1,90 +1,246 @@
-# OrionKV Node
+# OrionKV
 
-OrionKV is a single node application that contains all three planes:
+OrionKV is a distributed key-value store with:
 
-- **Control Plane**: membership, gossip, failure detection, ring lifecycle, bootstrap
-- **Data Plane**: local KV engine, persistence, replication writes, range streaming
-- **Coordination Plane**: routing + quorum decisions + retry/timeout orchestration
+- a **control plane** for membership, gossip, failure detection, consistent hashing, join, leave, and rebalance
+- a **coordination plane** for quorum reads and writes, replica routing, merge logic, and repair
+- a **data plane** for local storage, persistence, replica application, and range transfer
+- a separate **client-router** application that acts as the client-facing HTTP entrypoint and maintains a refreshable view of alive OrionKV nodes
 
-Kubernetes is intentionally out of scope in this document.
+This repository contains both the OrionKV node runtime and the client-router runtime.
 
-## Node Architecture
+## Components
 
-```text
-                +----------------------------------+
-                |               NODE               |
-                +----------------------------------+
+### OrionKV node
 
-   ┌──────────────────────────────────────────────┐    ┌──────────────────────────────────────────────┐
-   │           Coordination Plane                 │<---│              Data Plane                      │
-   │----------------------------------------------│    │----------------------------------------------│
-   │  Client API Controller                       │    │  Replica API Controller                      │
-   │  Coordinator Service                         │    │  Replica Service (idempotent writes)         │
-   │  Quorum Manager (R/W logic)                  │    │  Storage Engine                              │
-   │                                              │    │  - versioned KV                              │
-   │                                              │    │  - WAL / persistence                         │
-   │                                              │    │  - range scan                                │
-   │                                              │    │                                              │
-   │                                              │    │  Streaming / Bootstrap Service               │
-   └──────────────────────────────────────────────┘    └──────────────────────────────────────────────┘
-                        |
-                        |
-                        v
-                    ┌──────────────────────────────────────────────────────┐
-                    │                  Control Plane                       │
-                    │------------------------------------------------------│
-                    │  Hash Ring Service (partitioning)                    │
-                    │  Replica Selection Logic                             │
-                    │  Gossip Membership Service                           │
-                    │  Failure Detection                                   │
-                    └──────────────────────────────────────────────────────┘
-```
-
-## Current Code Structure
+Main class:
 
 - `src/main/java/com/orionkv/NodeApplication.java`
-- `src/main/java/com/orionkv/config`
-- `src/main/java/com/orionkv/controlplane/membership` control-plane membership services and gRPC handlers
-- `src/main/java/com/orionkv/controlplane/ring` control-plane consistent hashing and vnode services
-- `src/main/java/com/orionkv/controlplane/bootstrap` control-plane join/rebalance services and gRPC handlers
-- `src/main/java/com/orionkv/dataplane` data-plane storage/controllers/models
-- `src/main/java/com/orionkv/coordinationplane` coordination-plane routing/quorum services
-- `src/main/proto/controlplane.proto` control-plane gRPC contract
-- `src/main/proto/coordination.proto` coordination and replica-data gRPC contract
 
-## Build and Test
+Artifact:
+
+- `target/orionkv-0.0.1-SNAPSHOT.jar`
+
+Responsibilities:
+
+- gossip membership
+- failure detection
+- consistent hashing with virtual nodes
+- join / leave / failure rebalance
+- quorum read / write coordination
+- local persistence and replica serving
+
+### Client router
+
+Main class:
+
+- `src/main/java/com/orionkv/clientrouter/ClientRouterApplication.java`
+
+Artifact:
+
+- `target/orionkv-0.0.1-SNAPSHOT-client-router.jar`
+
+Responsibilities:
+
+- maintain a registry of alive node gRPC addresses
+- provide seed resolution for joining nodes
+- refresh the node table from a seed node
+- proxy client `PUT`, `GET`, and `DELETE` requests to the cluster
+
+## High-Level Architecture
+
+```text
+                    +--------------------------------------+
+                    |            Client Router             |
+                    |--------------------------------------|
+                    | seed resolution | registry refresh   |
+                    | routed client HTTP requests          |
+                    +-------------------+------------------+
+                                        |
+                                        v
+                +--------------------------------------------------+
+                |                 OrionKV Node                     |
+                +--------------------------------------------------+
+                | Coordination Plane | Control Plane | Data Plane  |
+                |--------------------------------------------------|
+                | quorum routing     | gossip        | local KV     |
+                | read/write merge   | FD            | WAL/persist  |
+                | replica selection  | hash ring     | replica RPC  |
+                | read repair        | rebalance     | range stream  |
+                +--------------------------------------------------+
+```
+
+## Repository Layout
+
+Core source:
+
+- `src/main/java/com/orionkv/controlplane`
+- `src/main/java/com/orionkv/coordinationplane`
+- `src/main/java/com/orionkv/dataplane`
+- `src/main/java/com/orionkv/clientrouter`
+- `src/main/java/com/orionkv/config`
+- `src/main/proto/controlplane.proto`
+- `src/main/proto/coordination.proto`
+
+Tests:
+
+- `src/test/java/com/orionkv`
+
+Operational notes:
+
+- [ORIONKV_DEVELOPMENT_ISSUES.md](/Users/saitarun/Desktop/ADS/Project/ORIONKV_DEVELOPMENT_ISSUES.md)
+
+Operational scripts:
+
+- `scripts/start-cluster.sh`
+- `scripts/kill-all.sh`
+- `scripts/docker-cluster-reset.sh`
+- `scripts/docker-cluster-restart.sh`
+- `scripts/docker-cluster-smoke.sh`
+- `scripts/generate-docker-compose.sh`
+- `scripts/fair-cluster-load.sh`
+- `scripts/docker-balance-audit.sh`
+- `scripts/latency-benchmark.sh`
+- `scripts/render-latency-results.sh`
+- `scripts/render-theoretical-latency-results.sh`
+- `scripts/plot-latency-benchmark.py`
+- `scripts/watch-grpc-key.sh`
+- `scripts/ubuntu-docker-e2e.sh`
+
+## Build
+
+Run tests:
 
 ```bash
 mvn clean test
 ```
 
-Package jar:
-
-```bash
-mvn -DskipTests package
-```
-
-## Run Context (Local Cluster)
-
-Build once:
+Package both applications:
 
 ```bash
 mvn clean package -DskipTests
 ```
 
-Start 6-node local cluster (gRPC + HTTP):
+Produced artifacts:
+
+- `target/orionkv-0.0.1-SNAPSHOT.jar`
+- `target/orionkv-0.0.1-SNAPSHOT-client-router.jar`
+
+## Recommended Local Development Flow
+
+### 1. Build
+
+```bash
+mvn clean package -DskipTests
+```
+
+### 2. Start the client router
+
+```bash
+java -jar target/orionkv-0.0.1-SNAPSHOT-client-router.jar \
+  --server.port=8090 \
+  --client.router.registry-path=data/client-router-nodes.json \
+  --client.router.refresh-interval-ms=5000 \
+  --client.router.rpc-timeout-ms=3000
+```
+
+### 3. Start a local OrionKV cluster
 
 ```bash
 ./scripts/start-cluster.sh
 ```
 
-Stop all nodes from pid files:
+This starts a local 6-node cluster and configures each node to use the client router base URL.
+
+### 4. Stop local nodes
 
 ```bash
 ./scripts/kill-all.sh
 ```
 
-Check membership on all nodes:
+## Client Router Operational Flow
+
+The client router is part of the normal cluster lifecycle, not just an optional client proxy.
+
+### Seed resolution for the first node in a brand-new cluster
+
+```bash
+curl -X POST http://127.0.0.1:8090/client/nodes/seed \
+  -H 'Content-Type: application/json' \
+  -d '{"nodeId":"node-1","grpcAddress":"10.0.0.11:9091"}'
+```
+
+If the router registry is empty, the response points the node back to itself as seed and stores it.
+
+### Seed resolution for later joining nodes
+
+```bash
+curl -X POST http://127.0.0.1:8090/client/nodes/seed \
+  -H 'Content-Type: application/json' \
+  -d '{"nodeId":"node-2","grpcAddress":"10.0.0.12:9092"}'
+```
+
+The router returns an already known alive node as the seed target.
+
+### Confirm a completed join
+
+After the node has joined and bootstrap has completed:
+
+```bash
+curl -X POST http://127.0.0.1:8090/client/nodes/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{"joiningNodeId":"node-2","seedGrpcAddress":"10.0.0.11:9091"}'
+```
+
+### Force a manual router refresh
+
+```bash
+curl -X POST http://127.0.0.1:8090/client/nodes/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"seedGrpcAddress":"10.0.0.11:9091"}'
+```
+
+### Inspect the router registry
+
+```bash
+curl http://127.0.0.1:8090/client/nodes
+```
+
+### Manually register a node in the router table
+
+```bash
+curl -X POST http://127.0.0.1:8090/client/nodes/register \
+  -H 'Content-Type: application/json' \
+  -d '{"nodeId":"node-9","grpcAddress":"10.0.0.19:9099"}'
+```
+
+### Routed client operations
+
+Put:
+
+```bash
+curl -X PUT http://127.0.0.1:8090/client/kv/user-1 \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"alice"}'
+```
+
+Get:
+
+```bash
+curl http://127.0.0.1:8090/client/kv/user-1
+```
+
+Delete:
+
+```bash
+curl -X DELETE http://127.0.0.1:8090/client/kv/user-1 \
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp":2000}'
+```
+
+## Local Inspection and Debugging
+
+Check membership across local nodes:
 
 ```bash
 for p in 9091 9092 9093 9094 9095 9096; do
@@ -94,123 +250,7 @@ for p in 9091 9092 9093 9094 9095 9096; do
 done
 ```
 
-Add one more node manually (example: node-7):
-
-```bash
-for i in 7; do
-  java -jar target/orionkv-0.0.1-SNAPSHOT.jar \
-    --server.port=$((8080+i)) --node.node-id=node-$i --node.address=127.0.0.1:$((9090+i)) \
-    --node.seed-address=127.0.0.1:9091 \
-    --node.gossip-interval-ms=1000 --node.failure-detection-interval-ms=1000 \
-    --node.suspect-timeout-ms=5000 --node.dead-timeout-ms=12000 \
-    > logs/node-$i.log 2>&1 & echo $! > pids/node-$i.pid
-done
-```
-
-Failure/leave test (example node-5):
-
-```bash
-kill -9 $(cat pids/node-5.pid)
-```
-
-With `suspect-timeout-ms=5000` and `dead-timeout-ms=12000`, peers should move:
-- `ALIVE -> SUSPECT` around 5s
-- `SUSPECT -> DEAD` around 12s
-
-Restart node-5:
-
-```bash
-for i in 5; do
-  java -jar target/orionkv-0.0.1-SNAPSHOT.jar \
-    --server.port=$((8080+i)) --node.node-id=node-$i --node.address=127.0.0.1:$((9090+i)) \
-    --node.seed-address=127.0.0.1:9091 \
-    --node.gossip-interval-ms=1000 --node.failure-detection-interval-ms=1000 \
-    --node.suspect-timeout-ms=5000 --node.dead-timeout-ms=12000 \
-    > logs/node-$i.log 2>&1 & echo $! > pids/node-$i.pid
-done
-```
-
-Useful logs:
-- `logs/node-*.log`
-
-## Configuration
-
-### Node (`node.*`)
-
-- `node.node-id`
-- `node.address`
-- `node.seed-address`
-- `node.gossip-interval-ms` (default `5000`)
-- `node.self-heartbeat-interval-ms` (default `1000`)
-- `node.failure-detection-interval-ms` (default `2000`)
-- `node.suspect-timeout-ms` (default `10000`)
-- `node.dead-timeout-ms` (default `30000`)
-- `node.virtual-node-count` (default `32`)
-- `node.replication-factor` (default `3`)
-- `node.write-quorum` (default `2`)
-- `node.read-quorum` (default `2`)
-
-### Data Plane (`dataplane.*`)
-
-- `dataplane.storage.log-path` (default `data/wal.log`)
-
-## Exposed APIs
-
-### Control Plane (gRPC)
-
-From `controlplane.proto`:
-
-- `GossipRpc.Gossip(GossipPayload) -> MembershipState`
-- `ClusterRpc.Join(JoinNodeRequest) -> MembershipState`
-- `ClusterRpc.GetMembership(google.protobuf.Empty) -> MembershipState`
-
-### Coordination and Replica Data (gRPC)
-
-From `coordination.proto`:
-
-- `CoordinationRpc.Put(ClientPutRequest) -> ClientPutResponse`
-- `CoordinationRpc.Get(ClientGetRequest) -> ClientGetResponse`
-- `ReplicaDataRpc.PutReplica(ReplicaPutRequest) -> ReplicaPutResponse`
-- `ReplicaDataRpc.GetReplica(ReplicaGetRequest) -> ReplicaGetResponse`
-
-### Data Plane (HTTP)
-
-- `PUT /api/kv/{key}`
-- `GET /api/kv/{key}`
-- `DELETE /api/kv/{key}?timestamp=...`
-- `GET /internal/storage/range?startToken=...&endToken=...`
-- `POST /internal/replica/put`
-- `POST /internal/replica/apply-batch`
-- `GET /internal/replica/stream?startToken=...&endToken=...`
-
-## Testing Scenarios
-
-### Coordination Quorum Tests
-
-1. Write quorum success (`N=3, W=2`): with 3 healthy replicas, `CoordinationRpc.Put` returns success and `ack_count >= 2`.
-2. Write quorum failure: with only one reachable replica, `CoordinationRpc.Put` returns failure and `ack_count < 2`.
-3. Read quorum success (`N=3, R=2`): with at least 2 responses, `CoordinationRpc.Get` returns read result from quorum winner.
-4. Read quorum failure: with fewer than 2 responses, `CoordinationRpc.Get` returns read-quorum failure.
-5. LWW conflict resolution: conflicting replica values return highest timestamp value.
-6. LWW tie case: equal timestamps resolve deterministically by node-id ordering.
-
-### Ring and Replication Correctness
-
-1. Deterministic routing: same key routed through different coordinators yields the same replica set.
-2. Ring consistency across nodes: all alive nodes produce identical token/replica mapping for sampled keys.
-3. Replica write correctness: after `CoordinationRpc.Put`, direct `ReplicaDataRpc.GetReplica` on chosen replicas shows expected value/version.
-
-### Failure and Recovery Behavior
-
-1. Single-replica failure: with one replica down, writes/reads still succeed for `W=2`, `R=2` if two replicas respond.
-2. Double-replica failure: with two replicas down, writes/reads fail with quorum-not-met outcomes.
-3. Membership transition impact: after node kill, verify `ALIVE -> SUSPECT -> DEAD` and routing continues with alive nodes.
-4. Rejoin correctness: after node restart and gossip convergence, reads remain correct for sampled keys.
-5. Persistence check: restart nodes after writes and verify values survive via quorum reads.
-
-### gRPC Smoke Commands
-
-Coordination Put:
+Direct coordination RPC write:
 
 ```bash
 grpcurl -plaintext -d '{"requestId":"r1","key":"alpha","value":"v1","timestamp":"0"}' \
@@ -218,7 +258,7 @@ grpcurl -plaintext -d '{"requestId":"r1","key":"alpha","value":"v1","timestamp":
   127.0.0.1:9091 orionkv.node.CoordinationRpc/Put
 ```
 
-Coordination Get:
+Direct coordination RPC read:
 
 ```bash
 grpcurl -plaintext -d '{"requestId":"r2","key":"alpha"}' \
@@ -226,75 +266,154 @@ grpcurl -plaintext -d '{"requestId":"r2","key":"alpha"}' \
   127.0.0.1:9092 orionkv.node.CoordinationRpc/Get
 ```
 
-Replica Put:
+Direct replica read:
 
 ```bash
-grpcurl -plaintext -d '{"requestId":"r3","key":"alpha","value":"v1","timestamp":"1710000000000","tombstone":false,"token":"123","sourceNodeId":"node-1"}' \
-  -proto src/main/proto/coordination.proto \
-  127.0.0.1:9093 orionkv.node.ReplicaDataRpc/PutReplica
-```
-
-Replica Get:
-
-```bash
-grpcurl -plaintext -d '{"requestId":"r4","key":"alpha"}' \
+grpcurl -plaintext -d '{"requestId":"r3","key":"alpha"}' \
   -proto src/main/proto/coordination.proto \
   127.0.0.1:9093 orionkv.node.ReplicaDataRpc/GetReplica
 ```
 
-## Docker
+Cluster summary over HTTP:
 
-Build:
+```bash
+curl http://127.0.0.1:8081/internal/cluster/summary
+```
+
+The cluster summary endpoint returns an aggregated cluster view built from alive nodes, including:
+
+- quick facts such as active node count, responding node count, total records, and average records per node
+- balance information such as minimum / maximum records and spread across nodes
+- node-by-node distribution data for replica storage counts
+
+## Docker and Multi-Node Flows
+
+Build the image:
 
 ```bash
 docker build -t orionkv:local .
 ```
 
-Run:
+Restart a generated Docker cluster:
 
 ```bash
-docker run --rm -p 8080:8080 -p 9090:9090 \
-  -v "$(pwd)/data:/app/data" \
-  -e APP_ARGS="--server.port=8080 --node.node-id=node-a --node.address=0.0.0.0:9090 --dataplane.storage.log-path=/app/data/wal.log" \
-  orionkv:local
+HOST_IP=127.0.0.1 \
+SEED_HOST_IP=127.0.0.1 \
+./scripts/docker-cluster-restart.sh
 ```
 
-## Ubuntu From Scratch
-
-Host bootstrap:
+Reset Docker cluster state:
 
 ```bash
-./scripts/setup-ubuntu-host.sh
-newgrp docker
-```
-
-End-to-end Docker cluster flow:
-
-```bash
-NODE_COUNT=25 \
-TOTAL_KEYS=50000 \
-CONCURRENCY=64 \
-VIRTUAL_NODE_COUNT=128 \
-./scripts/ubuntu-docker-e2e.sh
-```
-
-This flow will:
-- build the Docker image
-- generate a Docker Compose cluster
-- start the cluster
-- bulk-load data through quorum writes
-- run membership smoke checks
-- run replica balance/staleness audit
-
-Docker reset / restart:
-
-```bash
-# Stop cluster only
-./scripts/docker-cluster-down.sh
-
-# Stop cluster and wipe docker state
 ./scripts/docker-cluster-reset.sh
-
-# Full rebuild + restart
-NODE_COUNT=25 VIRTUAL_NODE_COUNT=128 ./scripts/docker-cluster-restart.sh
 ```
+
+Smoke-test the Docker cluster:
+
+```bash
+./scripts/docker-cluster-smoke.sh
+```
+
+For Ubuntu / VCL flows, use:
+
+- `scripts/setup-ubuntu-host.sh`
+- `scripts/ubuntu-docker-e2e.sh`
+
+## Benchmarking and Reporting
+
+Run a benchmark:
+
+```bash
+bash scripts/latency-benchmark.sh
+```
+
+Generate an HTML report from an existing raw or summary CSV:
+
+```bash
+bash scripts/render-latency-results.sh results/<run>.csv
+```
+
+Generate a theoretical/modelled report from the same measured run:
+
+```bash
+bash scripts/render-theoretical-latency-results.sh results/<run>.csv
+```
+
+Artifacts:
+
+- raw CSV
+- summary CSV
+- HTML report
+
+## Configuration
+
+### Node (`node.*`)
+
+- `node.node-id`
+- `node.address`
+- `node.bind-port`
+- `node.seed-address`
+- `node.client-router-base-url`
+- `node.gossip-interval-ms` default `5000`
+- `node.self-heartbeat-interval-ms` default `1000`
+- `node.failure-detection-interval-ms` default `2000`
+- `node.suspect-timeout-ms` default `10000`
+- `node.dead-timeout-ms` default `30000`
+- `node.virtual-node-count` default `32`
+- `node.replication-factor` default `3`
+- `node.write-quorum` default `2`
+- `node.read-quorum` default `2`
+
+### Client router (`client.router.*`)
+
+- `client.router.registry-path`
+- `client.router.refresh-interval-ms`
+- `client.router.rpc-timeout-ms`
+
+### Data plane (`dataplane.*`)
+
+- `dataplane.storage.log-path` default `data/wal.log`
+
+## Exposed APIs
+
+### Control-plane gRPC
+
+- `GossipRpc.Gossip(GossipPayload) -> MembershipState`
+- `ClusterRpc.Join(JoinNodeRequest) -> MembershipState`
+- `ClusterRpc.GetMembership(google.protobuf.Empty) -> MembershipState`
+
+### Coordination and replica-data gRPC
+
+- `CoordinationRpc.Put(ClientPutRequest) -> ClientPutResponse`
+- `CoordinationRpc.Get(ClientGetRequest) -> ClientGetResponse`
+- `ReplicaDataRpc.PutReplica(ReplicaPutRequest) -> ReplicaPutResponse`
+- `ReplicaDataRpc.GetReplica(ReplicaGetRequest) -> ReplicaGetResponse`
+
+### Client-router HTTP
+
+- `POST /client/nodes/register`
+- `POST /client/nodes/seed`
+- `POST /client/nodes/confirm`
+- `POST /client/nodes/refresh`
+- `GET /client/nodes`
+- `PUT /client/kv/{key}`
+- `GET /client/kv/{key}`
+- `DELETE /client/kv/{key}`
+
+### Node HTTP
+
+- `PUT /api/kv/{key}`
+- `GET /api/kv/{key}`
+- `DELETE /api/kv/{key}?timestamp=...`
+- `GET /internal/cluster/summary`
+- `GET /internal/storage/range?startToken=...&endToken=...`
+- `POST /internal/replica/put`
+- `POST /internal/replica/apply-batch`
+- `GET /internal/replica/stream?startToken=...&endToken=...`
+
+## Current Status
+
+- membership, gossip, failure detection, ring convergence, quorum operations, and rebalance flows are implemented
+- client-router integration is part of the main operational path
+- Docker-based multi-node deployment and audit tooling are present
+- latency benchmarking and HTML reporting flows are included in the repo
