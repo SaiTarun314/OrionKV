@@ -359,16 +359,18 @@ Artifacts:
 - `node.failure-detection-interval-ms` default `2000`
 - `node.suspect-timeout-ms` default `10000`
 - `node.dead-timeout-ms` default `30000`
-- `node.virtual-node-count` default `32`
+- `node.virtual-node-count` default `512`
 - `node.replication-factor` default `3`
 - `node.write-quorum` default `2`
 - `node.read-quorum` default `2`
 
 ### Client router (`client.router.*`)
 
-- `client.router.registry-path`
-- `client.router.refresh-interval-ms`
-- `client.router.rpc-timeout-ms`
+- `client.router.registry-path` default `data/client-router-nodes.json`
+- `client.router.refresh-interval-ms` default `5000`
+- `client.router.rpc-timeout-ms` default `3000`
+- `client.router.join-confirmation-attempts` default `20`
+- `client.router.join-confirmation-delay-ms` default `1000`
 
 ### Data plane (`dataplane.*`)
 
